@@ -71,10 +71,18 @@ export function createHost(options: HostOptions): Host {
     const removed = await workspaces.remove(contextId, piEnvironment(config, caller, contextId));
     if (!removed.ok) console.error(`context ${contextId}: removing the workspace failed: ${removed.error}`);
   };
-  const executor = new PiAgentExecutor({ contexts: store.contexts, sessions, sessionsDir, now });
+  const executor = new PiAgentExecutor({
+    contexts: store.contexts,
+    sessions,
+    sessionsDir,
+    now,
+    inputTimeoutMs: config.inputTimeoutSeconds * 1000,
+    failTask: (taskId, caller, reason) => store.tasks.fail(taskId, caller, reason),
+  });
   const requestHandler = new ContextGuardHandler(
     new DefaultRequestHandler(buildAgentCard(config), store.tasks, executor),
     store.contexts,
+    store.tasks,
     now,
   );
 

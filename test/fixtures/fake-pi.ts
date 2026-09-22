@@ -12,6 +12,21 @@ if (process.argv[2] !== "--mode" || process.argv[3] !== "rpc" || !sessionFile) {
 appendFileSync("spawns.log", `${sessionFile}\n`);
 
 let aborted = false;
+let nextDialog = 1;
+const dialogs = new Map<string, (response: { value?: string; confirmed?: boolean; cancelled?: boolean }) => void>();
+
+/** Opens a dialog the way an extension's `ctx.ui.*` does in RPC mode, and waits for the host's response. */
+function dialog(method: string, fields: Record<string, unknown>): Promise<{ value?: string; confirmed?: boolean; cancelled?: boolean }> {
+  const id = `ui-${nextDialog++}`;
+  emit({ type: "extension_ui_request", id, method, ...fields });
+  return new Promise((resolve) => dialogs.set(id, resolve));
+}
+
+function describeAnswer(response: { value?: string; confirmed?: boolean; cancelled?: boolean }): string {
+  if (response.cancelled) return "<cancelled>";
+  if (response.confirmed !== undefined) return `confirmed=${response.confirmed}`;
+  return response.value ?? "<none>";
+}
 let pending: NodeJS.Timeout | undefined;
 let finishPending: (() => void) | undefined;
 
@@ -34,6 +49,7 @@ function assistant(text: string, stopReason = "stop", errorMessage?: string): Re
 }
 
 function prompt(message: string): void {
+  aborted = false;
   appendFileSync(sessionFile!, `${JSON.stringify({ role: "user", message })}\n`);
   emit({ type: "agent_start" });
   if (message === "crash") {
@@ -57,6 +73,32 @@ function prompt(message: string): void {
     settle(assistant(JSON.stringify({ cwd: process.cwd(), contextId: process.env.FRACTION_AGENTS_CONTEXT_ID })));
     return;
   }
+  // "ask:<q1>|<q2>" asks each question in turn through an input dialog, then replies with the answers.
+  const ask = /^ask:(.*)$/.exec(message);
+  if (ask) {
+    void (async () => {
+      emit({ type: "extension_ui_request", id: "status-1", method: "setStatus", statusKey: "fake", statusText: "asking" });
+      const answers: string[] = [];
+      for (const question of ask[1]!.split("|")) {
+        answers.push(describeAnswer(await dialog("input", { title: question, placeholder: "your answer" })));
+        if (aborted) {
+          settle(assistant("", "aborted"));
+          return;
+        }
+      }
+      settle(assistant(`answers:${answers.join("|")}`));
+    })();
+    return;
+  }
+  const confirm = /^confirm:(.*)$/.exec(message);
+  if (confirm) {
+    void (async () => {
+      const chosen = await dialog("select", { title: confirm[1], options: ["yes", "no"] });
+      const confirmed = await dialog("confirm", { title: confirm[1], message: "Sure?" });
+      settle(assistant(`select=${describeAnswer(chosen)}|confirm=${describeAnswer(confirmed)}`));
+    })();
+    return;
+  }
   const wait = /^wait:(\d+)$/.exec(message);
   if (wait) {
     finishPending = () => settle(assistant("", "aborted"));
@@ -77,7 +119,13 @@ process.stdin.on("data", (chunk: string) => {
   while ((newline = buffer.indexOf("\n")) >= 0) {
     const line = buffer.slice(0, newline);
     buffer = buffer.slice(newline + 1);
-    const command = JSON.parse(line) as { id?: string; type: string; message?: string };
+    const command = JSON.parse(line) as { id?: string; type: string; message?: string } & Record<string, unknown>;
+    if (command.type === "extension_ui_response") {
+      const resolve = dialogs.get(command.id ?? "");
+      dialogs.delete(command.id ?? "");
+      resolve?.(command as { value?: string; confirmed?: boolean; cancelled?: boolean });
+      continue;
+    }
     const respond = (data?: unknown) => emit({ id: command.id, type: "response", command: command.type, success: true, data });
     switch (command.type) {
       case "prompt":
@@ -86,6 +134,10 @@ process.stdin.on("data", (chunk: string) => {
         break;
       case "abort":
         aborted = true;
+        for (const [id, resolve] of dialogs) {
+          dialogs.delete(id);
+          resolve({ cancelled: true });
+        }
         if (pending) {
           clearTimeout(pending);
           pending = undefined;

@@ -144,15 +144,30 @@ describe("SQLite task store", () => {
     const first = openStore(path);
     await first.tasks.save(task("t1", "c1", TaskState.TASK_STATE_WORKING, "2026-09-22T00:00:00.000Z"), alice);
     await first.tasks.save(task("t2", "c1", TaskState.TASK_STATE_COMPLETED, "2026-09-22T00:00:01.000Z"), alice);
+    await first.tasks.save(task("t3", "c1", TaskState.TASK_STATE_INPUT_REQUIRED, "2026-09-22T00:00:02.000Z"), alice);
     first.close();
     const second = openStore(path);
-    assert.equal(second.tasks.failUnfinished("the host restarted"), 1);
+    assert.equal(second.tasks.failUnfinished("the host restarted"), 2);
+    assert.equal((await second.tasks.load("t3", alice))?.status?.state, TaskState.TASK_STATE_FAILED);
     const t1 = await second.tasks.load("t1", alice);
     assert.equal(t1?.status?.state, TaskState.TASK_STATE_FAILED);
     const reason = t1?.status?.message?.parts[0]?.content;
     assert.deepEqual(reason, { $case: "text", value: "the host restarted" });
     assert.equal((await second.tasks.load("t2", alice))?.status?.state, TaskState.TASK_STATE_COMPLETED);
     second.close();
+  });
+
+  it("fails one unfinished task of an owner", async () => {
+    const store = openStore(tempDb());
+    await store.tasks.save(task("t1", "c1", TaskState.TASK_STATE_INPUT_REQUIRED, "2026-09-22T00:00:00.000Z"), alice);
+    await store.tasks.save(task("t2", "c1", TaskState.TASK_STATE_COMPLETED, "2026-09-22T00:00:01.000Z"), alice);
+    assert.equal(store.tasks.fail("t1", "system:serviceaccount:ns:bob", "no answer"), false, "only the owner's task");
+    assert.equal(store.tasks.fail("t1", "system:serviceaccount:ns:alice", "no answer"), true);
+    const t1 = await store.tasks.load("t1", alice);
+    assert.equal(t1?.status?.state, TaskState.TASK_STATE_FAILED);
+    assert.deepEqual(t1?.status?.message?.parts[0]?.content, { $case: "text", value: "no answer" });
+    assert.equal(store.tasks.fail("t2", "system:serviceaccount:ns:alice", "no answer"), false, "a finished task stays as it is");
+    store.close();
   });
 });
 

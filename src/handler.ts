@@ -16,8 +16,9 @@ import type {
   Task,
   TaskPushNotificationConfig,
 } from "@a2a-js/sdk";
-import { RequestMalformedError, UnsupportedOperationError } from "@a2a-js/sdk/errors";
-import type { A2ARequestHandler, ServerCallContext } from "@a2a-js/sdk/server";
+import { TaskState } from "@a2a-js/sdk";
+import { RequestMalformedError, TaskNotFoundError, UnsupportedOperationError } from "@a2a-js/sdk/errors";
+import type { A2ARequestHandler, ServerCallContext, TaskStore } from "@a2a-js/sdk/server";
 
 import type { ContextRegistry } from "./store.ts";
 
@@ -27,26 +28,28 @@ import type { ContextRegistry } from "./store.ts";
  * - Only the host numbers contexts. A message without a contextId starts a new context owned by the caller.
  * - A message with a contextId is accepted only if that context exists and belongs to the caller. Anything else,
  *   including someone else's context, is refused with the same error.
- * - A message addressed to an existing task is refused: a task here never waits for input, so the follow-up
- *   belongs in a new task in the same context.
+ * - A message addressed to an existing task is accepted only while that task waits for the caller's answer
+ *   (INPUT_REQUIRED); the message is the answer. Any other follow-up belongs in a new task in the same context.
  */
 export class ContextGuardHandler implements A2ARequestHandler {
   readonly #inner: A2ARequestHandler;
   readonly #contexts: ContextRegistry;
+  readonly #tasks: TaskStore;
   readonly #now: () => number;
 
-  constructor(inner: A2ARequestHandler, contexts: ContextRegistry, now: () => number) {
+  constructor(inner: A2ARequestHandler, contexts: ContextRegistry, tasks: TaskStore, now: () => number) {
     this.#inner = inner;
     this.#contexts = contexts;
+    this.#tasks = tasks;
     this.#now = now;
   }
 
-  sendMessage(params: SendMessageRequest, context: ServerCallContext): Promise<Message | Task> {
-    return this.#inner.sendMessage(this.#resolveContext(params, context), context);
+  async sendMessage(params: SendMessageRequest, context: ServerCallContext): Promise<Message | Task> {
+    return this.#inner.sendMessage(await this.#resolveContext(params, context), context);
   }
 
-  sendMessageStream(params: SendMessageRequest, context: ServerCallContext): AsyncGenerator<StreamResponse, void, undefined> {
-    return this.#inner.sendMessageStream(this.#resolveContext(params, context), context);
+  async *sendMessageStream(params: SendMessageRequest, context: ServerCallContext): AsyncGenerator<StreamResponse, void, undefined> {
+    yield* this.#inner.sendMessageStream(await this.#resolveContext(params, context), context);
   }
 
   getAgentCard(): Promise<AgentCard> {
@@ -92,17 +95,24 @@ export class ContextGuardHandler implements A2ARequestHandler {
     return this.#inner.deleteTaskPushNotificationConfig(params, context);
   }
 
-  #resolveContext(params: SendMessageRequest, context: ServerCallContext): SendMessageRequest {
+  async #resolveContext(params: SendMessageRequest, context: ServerCallContext): Promise<SendMessageRequest> {
     const message = params.message;
     if (!message) throw new RequestMalformedError("request.message is required.");
     const caller = context.user?.isAuthenticated ? context.user.userName : "";
     if (caller === "") throw new UnsupportedOperationError("The caller is not authenticated.");
-    if (message.taskId) {
-      throw new UnsupportedOperationError(
-        "Tasks of this agent do not take follow-up messages. Send a new message with the same contextId instead.",
-      );
-    }
     const now = this.#now();
+    if (message.taskId) {
+      // The store only finds the caller's own tasks.
+      const task = await this.#tasks.load(message.taskId, context);
+      if (!task) throw new TaskNotFoundError(`Task not found: ${message.taskId}`);
+      if (task.status?.state !== TaskState.TASK_STATE_INPUT_REQUIRED) {
+        throw new UnsupportedOperationError(
+          "Only a task waiting for your answer (TASK_STATE_INPUT_REQUIRED) takes a message. Send a new message with the same contextId instead.",
+        );
+      }
+      this.#contexts.touch(task.contextId, now);
+      return params;
+    }
     if (message.contextId) {
       if (!this.#contexts.get(message.contextId, caller)) {
         throw new RequestMalformedError(

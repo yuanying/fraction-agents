@@ -1,4 +1,4 @@
-import { PiRpcProcess, type PromptOutcome } from "./pi-rpc.ts";
+import { PiRpcProcess, type DialogRequest, type PromptOutcome } from "./pi-rpc.ts";
 import type { ContextWorkspaces } from "./workspace.ts";
 
 /** The environment variable that tells pi (and the extensions in it) who called. */
@@ -24,6 +24,38 @@ export const PI_BASE_ENV = [
   "LC_CTYPE",
   "LC_MESSAGES",
 ] as const;
+
+/** What a running prompt does next: put a question to the caller, or finish. */
+export type RunStep = { kind: "question"; question: DialogRequest } | { kind: "done"; outcome: PromptOutcome };
+
+/** One prompt running in a context's pi process, seen as the questions it asks and then its outcome. */
+export class PromptRun {
+  readonly #steps: RunStep[] = [];
+  #wake: (() => void) | undefined;
+  #process: PiRpcProcess | undefined;
+
+  /** Resolves with the next question, or with the outcome once the prompt has settled. */
+  async next(): Promise<RunStep> {
+    while (this.#steps.length === 0) await new Promise<void>((resolve) => (this.#wake = resolve));
+    return this.#steps.shift()!;
+  }
+
+  /** Answers a question the run asked. `undefined` dismisses it. */
+  answer(id: string, text: string | undefined): void {
+    this.#process?.respondDialog(id, text);
+  }
+
+  attach(process: PiRpcProcess): void {
+    this.#process = process;
+  }
+
+  push(step: RunStep): void {
+    this.#steps.push(step);
+    const wake = this.#wake;
+    this.#wake = undefined;
+    wake?.();
+  }
+}
 
 export interface SessionTarget {
   contextId: string;
@@ -86,11 +118,16 @@ export class PiSessions {
     return this.#entries.get(contextId)?.taskId !== undefined;
   }
 
+  /** The task running in the context, if any. */
+  runningTask(contextId: string): string | undefined {
+    return this.#entries.get(contextId)?.taskId;
+  }
+
   /**
    * Runs one prompt in the context's pi process. Returns `undefined` at once, without running anything, if another
    * task is running in the context.
    */
-  run(target: SessionTarget, taskId: string, text: string): Promise<PromptOutcome> | undefined {
+  run(target: SessionTarget, taskId: string, text: string): PromptRun | undefined {
     let entry = this.#entries.get(target.contextId);
     if (entry?.taskId !== undefined) return undefined;
     if (!entry) {
@@ -101,6 +138,7 @@ export class PiSessions {
     entry.taskId = taskId;
     entry.aborted = false;
     const current = entry;
+    const run = new PromptRun();
     const outcome = async (): Promise<PromptOutcome> => {
       if (!current.process?.alive) {
         const env = piEnvironment(this.#options, target.caller, target.contextId);
@@ -109,9 +147,10 @@ export class PiSessions {
         if (current.aborted) return { status: "aborted" };
         current.process = this.#start(target, env);
       }
-      return current.process.prompt(text);
+      run.attach(current.process);
+      return current.process.prompt(text, (question) => run.push({ kind: "question", question }));
     };
-    return outcome().finally(() => {
+    const release = () => {
       current.taskId = undefined;
       if (!current.process?.alive) {
         if (this.#entries.get(target.contextId) === current) this.#entries.delete(target.contextId);
@@ -119,7 +158,15 @@ export class PiSessions {
       }
       current.idleTimer = setTimeout(() => void this.stop(target.contextId), this.#options.idleTimeoutMs);
       current.idleTimer.unref();
-    });
+    };
+    // The context is released before the outcome is reported, so a task sent right after this one is not busy.
+    void outcome()
+      .catch((error: unknown): PromptOutcome => ({ status: "failed", error: error instanceof Error ? error.message : String(error) }))
+      .then((result) => {
+        release();
+        run.push({ kind: "done", outcome: result });
+      });
+    return run;
   }
 
   /** Aborts the task if it is running. Returns whether it was. */

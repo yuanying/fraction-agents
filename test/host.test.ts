@@ -516,3 +516,136 @@ describe("context workspaces", () => {
     );
   });
 });
+
+async function waitForState(url: string, token: string, id: string, state: string): Promise<Json> {
+  for (let i = 0; i < 200; i++) {
+    const body = await rpc(url, token, "GetTask", { id });
+    assert.equal(body.error, undefined, JSON.stringify(body.error));
+    if (body.result.status.state === state) return body.result;
+    assert.equal(TERMINAL.has(body.result.status.state), false, `task ended as ${body.result.status.state}`);
+    await sleep(25);
+  }
+  throw new Error(`task ${id} did not reach ${state}`);
+}
+
+async function answer(url: string, token: string, task: Json, text: string): Promise<Json> {
+  return rpc(url, token, "SendMessage", {
+    message: message(text, { contextId: task.contextId, taskId: task.id }),
+    configuration: { returnImmediately: true },
+  });
+}
+
+describe("asking the caller", () => {
+  it("puts the task in INPUT_REQUIRED with the question and continues it with the caller's answer", async () => {
+    const { url, config } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "ask:Which page?");
+    const waiting = await waitForState(url, "owner", task.id, "TASK_STATE_INPUT_REQUIRED");
+    assert.equal(statusText(waiting), "Which page?");
+    const body = await answer(url, "owner", task, "the index");
+    assert.equal(body.error, undefined, JSON.stringify(body.error));
+    assert.equal(body.result.task.id, task.id);
+    const done = await waitForTask(url, "owner", task.id);
+    assert.equal(done.status.state, "TASK_STATE_COMPLETED");
+    assert.equal(resultText(done), "answers:the index");
+    assert.equal(spawns(config).length, 1, "the same pi process carries on");
+  });
+
+  it("asks as many times as the agent needs within one task", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "ask:First?|Second?");
+    assert.equal(statusText(await waitForState(url, "owner", task.id, "TASK_STATE_INPUT_REQUIRED")), "First?");
+    await answer(url, "owner", task, "one");
+    for (let i = 0; i < 200; i++) {
+      const current = (await rpc(url, "owner", "GetTask", { id: task.id })).result;
+      if (current.status.state === "TASK_STATE_INPUT_REQUIRED" && statusText(current) === "Second?") break;
+      await sleep(25);
+    }
+    await answer(url, "owner", task, "two");
+    assert.equal(resultText(await waitForTask(url, "owner", task.id)), "answers:one|two");
+  });
+
+  it("returns the waiting task to a caller that waits for the result", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const body = await rpc(url, "owner", "SendMessage", { message: message("ask:Which page?") });
+    assert.equal(body.result.task.status.state, "TASK_STATE_INPUT_REQUIRED");
+    const answered = await rpc(url, "owner", "SendMessage", {
+      message: message("the log", { contextId: body.result.task.contextId, taskId: body.result.task.id }),
+    });
+    assert.equal(answered.result.task.status.state, "TASK_STATE_COMPLETED");
+    assert.equal(resultText(answered.result.task), "answers:the log");
+  });
+
+  it("does not let another caller answer", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "ask:Which page?");
+    await waitForState(url, "owner", task.id, "TASK_STATE_INPUT_REQUIRED");
+    const body = await rpc(url, "claude", "SendMessage", {
+      message: message("mine now", { taskId: task.id }),
+      configuration: { returnImmediately: true },
+    });
+    assert.ok(body.error, "another caller's task is not found");
+    assert.equal((await rpc(url, "owner", "GetTask", { id: task.id })).result.status.state, "TASK_STATE_INPUT_REQUIRED");
+  });
+
+  it("refuses a message to a finished task", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "hello");
+    await waitForTask(url, "owner", task.id);
+    const body = await answer(url, "owner", task, "more");
+    assert.ok(body.error);
+  });
+
+  it("rejects a new task in the context while it waits for an answer", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "ask:Which page?");
+    await waitForState(url, "owner", task.id, "TASK_STATE_INPUT_REQUIRED");
+    const other = await send(url, "owner", "something else", { contextId: task.contextId });
+    const rejected = await waitForTask(url, "owner", other.id);
+    assert.equal(rejected.status.state, "TASK_STATE_REJECTED");
+    assert.match(statusText(rejected), new RegExp(`waiting for an answer.*${task.id}`));
+  });
+
+  it("cancels a task that waits for an answer and lets the context go on", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "ask:Which page?");
+    await waitForState(url, "owner", task.id, "TASK_STATE_INPUT_REQUIRED");
+    const body = await rpc(url, "owner", "CancelTask", { id: task.id });
+    assert.equal(body.error, undefined, JSON.stringify(body.error));
+    assert.equal(body.result.status.state, "TASK_STATE_CANCELED");
+    const next = await send(url, "owner", "after", { contextId: task.contextId });
+    const done = await waitForTask(url, "owner", next.id);
+    assert.equal(done.status.state, "TASK_STATE_COMPLETED", statusText(done));
+    assert.equal((await rpc(url, "owner", "GetTask", { id: task.id })).result.status.state, "TASK_STATE_CANCELED");
+  });
+
+  it("gives up on a question nobody answers in time", async () => {
+    const { url } = await start(makeConfig(tempDir(), { inputTimeoutSeconds: 0.3 }));
+    const task = await send(url, "owner", "ask:Which page?");
+    await waitForState(url, "owner", task.id, "TASK_STATE_INPUT_REQUIRED");
+    const done = await waitForTask(url, "owner", task.id);
+    assert.equal(done.status.state, "TASK_STATE_FAILED");
+    assert.match(statusText(done), /No answer came/);
+    assert.ok((await answer(url, "owner", task, "too late")).error);
+    const next = await send(url, "owner", "after", { contextId: task.contextId });
+    assert.equal((await waitForTask(url, "owner", next.id)).status.state, "TASK_STATE_COMPLETED");
+  });
+
+  it("dismisses dialogs that are not free-form questions", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "confirm:Delete it?");
+    const done = await waitForTask(url, "owner", task.id);
+    assert.equal(resultText(done), "select=<cancelled>|confirm=<cancelled>");
+  });
+
+  it("fails a task left waiting when the host restarts", async () => {
+    const config = makeConfig(tempDir());
+    const first = await start(config);
+    const task = await send(first.url, "owner", "ask:Which page?");
+    await waitForState(first.url, "owner", task.id, "TASK_STATE_INPUT_REQUIRED");
+    await first.host.close();
+    running.splice(running.indexOf(first.host), 1);
+    const second = await start(config);
+    const again = await rpc(second.url, "owner", "GetTask", { id: task.id });
+    assert.equal(again.result.status.state, "TASK_STATE_FAILED");
+  });
+});

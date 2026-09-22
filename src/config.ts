@@ -42,6 +42,8 @@ export interface Config {
   idleTimeoutSeconds: number;
   /** How long an unused context's session file is kept before it is deleted. */
   sessionRetentionSeconds: number;
+  /** How long a task waits for the caller's answer to the agent's question before it fails. */
+  inputTimeoutSeconds: number;
   /** The command that starts pi. `--mode rpc --session <file>` is appended. */
   piCommand: string[];
   /**
@@ -80,6 +82,7 @@ export function parseConfig(input: unknown): Config {
     idleTimeoutSeconds: input.idleTimeoutSeconds === undefined ? 1800 : duration(input, "idleTimeoutSeconds"),
     sessionRetentionSeconds:
       input.sessionRetentionSeconds === undefined ? 604800 : duration(input, "sessionRetentionSeconds"),
+    inputTimeoutSeconds: input.inputTimeoutSeconds === undefined ? 86400 : duration(input, "inputTimeoutSeconds"),
     piCommand: input.piCommand === undefined ? ["pi"] : command(input.piCommand),
     passEnv: input.passEnv === undefined ? [] : envNames(input.passEnv),
     ...(input.contextWorkspace === undefined ? {} : { contextWorkspace: contextWorkspace(input.contextWorkspace) }),

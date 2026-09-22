@@ -6,7 +6,7 @@ import { RequestMalformedError } from "@a2a-js/sdk/errors";
 import { resolveUserScope, type ServerCallContext, type TaskStore } from "@a2a-js/sdk/server";
 
 const DEFAULT_PAGE_SIZE = 50;
-const UNFINISHED = [TaskState.TASK_STATE_SUBMITTED, TaskState.TASK_STATE_WORKING];
+const UNFINISHED = [TaskState.TASK_STATE_SUBMITTED, TaskState.TASK_STATE_WORKING, TaskState.TASK_STATE_INPUT_REQUIRED];
 
 export interface ContextRecord {
   contextId: string;
@@ -132,36 +132,49 @@ export class SqliteTaskStore implements TaskStore {
   }
 
   /**
-   * Marks tasks still submitted or working as failed. Called at start-up: no pi process survives the host, so
-   * nothing will ever finish them.
+   * Marks tasks still submitted, working or waiting for input as failed. Called at start-up: no pi process survives
+   * the host, so nothing will ever finish them.
    */
   failUnfinished(reason: string): number {
     const rows = this.#db
       .prepare(`SELECT owner, body FROM tasks WHERE state IN (${UNFINISHED.map(() => "?").join(", ")})`)
       .all(...UNFINISHED) as { owner: string; body: string }[];
-    const update = this.#db.prepare(
-      "UPDATE tasks SET state = ?, status_timestamp = ?, body = ? WHERE owner = ? AND id = ?",
-    );
-    for (const row of rows) {
-      const task = Task.fromJSON(JSON.parse(row.body));
-      const timestamp = new Date().toISOString();
-      task.status = {
-        state: TaskState.TASK_STATE_FAILED,
-        timestamp,
-        message: {
-          messageId: randomUUID(),
-          contextId: task.contextId,
-          taskId: task.id,
-          role: Role.ROLE_AGENT,
-          parts: [{ content: { $case: "text", value: reason }, metadata: {}, filename: "", mediaType: "text/plain" }],
-          metadata: {},
-          extensions: [],
-          referenceTaskIds: [],
-        },
-      };
-      update.run(TaskState.TASK_STATE_FAILED, timestamp, JSON.stringify(Task.toJSON(task)), row.owner, task.id);
-    }
+    for (const row of rows) this.#markFailed(row.owner, Task.fromJSON(JSON.parse(row.body)), reason);
     return rows.length;
+  }
+
+  /**
+   * Marks one of the owner's unfinished tasks as failed, outside of any running request (for example when a
+   * question to the caller times out). Returns whether there was such a task.
+   */
+  fail(taskId: string, owner: string, reason: string): boolean {
+    const row = this.#db
+      .prepare(`SELECT body FROM tasks WHERE owner = ? AND id = ? AND state IN (${UNFINISHED.map(() => "?").join(", ")})`)
+      .get(owner, taskId, ...UNFINISHED) as { body: string } | undefined;
+    if (!row) return false;
+    this.#markFailed(owner, Task.fromJSON(JSON.parse(row.body)), reason);
+    return true;
+  }
+
+  #markFailed(owner: string, task: Task, reason: string): void {
+    const timestamp = new Date().toISOString();
+    task.status = {
+      state: TaskState.TASK_STATE_FAILED,
+      timestamp,
+      message: {
+        messageId: randomUUID(),
+        contextId: task.contextId,
+        taskId: task.id,
+        role: Role.ROLE_AGENT,
+        parts: [{ content: { $case: "text", value: reason }, metadata: {}, filename: "", mediaType: "text/plain" }],
+        metadata: {},
+        extensions: [],
+        referenceTaskIds: [],
+      },
+    };
+    this.#db
+      .prepare("UPDATE tasks SET state = ?, status_timestamp = ?, body = ? WHERE owner = ? AND id = ?")
+      .run(TaskState.TASK_STATE_FAILED, timestamp, JSON.stringify(Task.toJSON(task)), owner, task.id);
   }
 }
 
