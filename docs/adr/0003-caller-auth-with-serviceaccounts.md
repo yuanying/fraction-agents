@@ -1,7 +1,7 @@
 # 0003. 呼び出し元の認証は ServiceAccount と TokenReview で行う
 
 - Date: 2026-09-22
-- Status: Accepted
+- Status: Accepted（「公開の範囲」の「LAN の中だけに公開する」は ADR 0006 で置き換えた）
 
 ## Context
 
