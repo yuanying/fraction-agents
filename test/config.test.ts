@@ -27,6 +27,26 @@ describe("config", () => {
     assert.equal(config.version, "0.0.0");
     assert.deepEqual(config.skills, []);
     assert.deepEqual(config.passEnv, []);
+    assert.equal(config.contextWorkspace, undefined);
+    assert.equal(config.inputTimeoutSeconds, 86400);
+  });
+
+  it("takes the commands that prepare and remove a context's workspace", () => {
+    const config = parseConfig({
+      ...minimal,
+      contextWorkspace: { prepare: ["node", "worktree.ts", "prepare"], remove: ["node", "worktree.ts", "remove"] },
+    });
+    assert.deepEqual(config.contextWorkspace, {
+      prepare: ["node", "worktree.ts", "prepare"],
+      remove: ["node", "worktree.ts", "remove"],
+    });
+    assert.deepEqual(parseConfig({ ...minimal, contextWorkspace: { prepare: ["mkdir", "-p"] } }).contextWorkspace, {
+      prepare: ["mkdir", "-p"],
+      remove: [],
+    });
+    assert.throws(() => parseConfig({ ...minimal, contextWorkspace: {} }), /contextWorkspace\.prepare/);
+    assert.throws(() => parseConfig({ ...minimal, contextWorkspace: { prepare: [] } }), /contextWorkspace\.prepare/);
+    assert.throws(() => parseConfig({ ...minimal, contextWorkspace: ["mkdir"] }), /contextWorkspace/);
   });
 
   it("takes extra environment variable names to pass to pi", () => {
@@ -45,6 +65,7 @@ describe("config", () => {
       port: 9000,
       idleTimeoutSeconds: 60,
       sessionRetentionSeconds: 3600,
+      inputTimeoutSeconds: 600,
       workDir: "/work",
       piCommand: ["node", "fake-pi.ts"],
       skills: [{ id: "ingest", name: "Ingest", description: "Ingests a source.", tags: ["wiki"], examples: ["add this"] }],
@@ -53,6 +74,7 @@ describe("config", () => {
     assert.equal(config.port, 9000);
     assert.equal(config.idleTimeoutSeconds, 60);
     assert.equal(config.sessionRetentionSeconds, 3600);
+    assert.equal(config.inputTimeoutSeconds, 600);
     assert.equal(config.workDir, "/work");
     assert.deepEqual(config.piCommand, ["node", "fake-pi.ts"]);
     assert.deepEqual(config.skills, [

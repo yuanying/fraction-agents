@@ -1,0 +1,15 @@
+{
+  "name": "fraction-agents-pi",
+  "version": "0.1.0",
+  "description": "Pi extensions for fraction-agents: a GitHub gate (push, pull request and merge tools, and guards on write, edit and bash) and a tool that asks the caller.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./extensions/github-gate.ts", "./extensions/ask-caller.ts"]
+  },
+  "peerDependencies": {
+    "typebox": "*"
+  }
+}

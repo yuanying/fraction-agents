@@ -12,8 +12,9 @@ import { authenticate, type TokenReviewer } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { PiAgentExecutor } from "./executor.ts";
 import { ContextGuardHandler } from "./handler.ts";
-import { PiSessions } from "./sessions.ts";
+import { PiSessions, piEnvironment } from "./sessions.ts";
 import { openStore } from "./store.ts";
+import { ContextWorkspaces } from "./workspace.ts";
 
 export interface HostOptions {
   config: Config;
@@ -58,17 +59,30 @@ export function createHost(options: HostOptions): Host {
   const orphaned = store.tasks.failUnfinished("The agent host restarted before the task finished.");
   if (orphaned > 0) console.log(`marked ${orphaned} unfinished task(s) from a previous run as failed`);
 
+  const workspaces = new ContextWorkspaces(config.workDir, config.contextWorkspace);
   const sessions = new PiSessions({
     piCommand: config.piCommand,
     agentDir: config.agentDir,
-    workDir: config.workDir,
+    workspaces,
     idleTimeoutMs: config.idleTimeoutSeconds * 1000,
     passEnv: config.passEnv,
   });
-  const executor = new PiAgentExecutor({ contexts: store.contexts, sessions, sessionsDir, now });
+  const removeWorkspace = async (contextId: string, caller: string) => {
+    const removed = await workspaces.remove(contextId, piEnvironment(config, caller, contextId));
+    if (!removed.ok) console.error(`context ${contextId}: removing the workspace failed: ${removed.error}`);
+  };
+  const executor = new PiAgentExecutor({
+    contexts: store.contexts,
+    sessions,
+    sessionsDir,
+    now,
+    inputTimeoutMs: config.inputTimeoutSeconds * 1000,
+    failTask: (taskId, caller, reason) => store.tasks.fail(taskId, caller, reason),
+  });
   const requestHandler = new ContextGuardHandler(
     new DefaultRequestHandler(buildAgentCard(config), store.tasks, executor),
     store.contexts,
+    store.tasks,
     now,
   );
 
@@ -106,9 +120,16 @@ export function createHost(options: HostOptions): Host {
     for (const context of store.contexts.usedBefore(cutoff)) {
       if (sessions.isBusy(context.contextId)) continue;
       await sessions.stop(context.contextId);
+      await removeWorkspace(context.contextId, context.owner);
       rmSync(join(sessionsDir, context.sessionFile), { force: true });
       store.contexts.remove(context.contextId);
       console.log(`context ${context.contextId}: deleted after the retention period`);
+    }
+    // Workspaces of contexts the host no longer knows, e.g. left behind when the host stopped halfway.
+    for (const contextId of workspaces.present()) {
+      if (store.contexts.has(contextId) || sessions.isBusy(contextId)) continue;
+      await removeWorkspace(contextId, "");
+      console.log(`context ${contextId}: removed a workspace left behind`);
     }
   };
   const sweepTimer = setInterval(

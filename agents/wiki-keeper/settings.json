@@ -1,0 +1,8 @@
+{
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.5",
+  "defaultThinkingLevel": "medium",
+  "defaultProjectTrust": "never",
+  "enableInstallTelemetry": false,
+  "packages": ["/opt/fraction-agents/pi-package"]
+}

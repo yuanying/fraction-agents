@@ -1,0 +1,22 @@
+{
+  "name": "wiki-keeper",
+  "description": "LLM Wiki の管理人。原文の取り込み、Wiki への質問、整理、公開範囲の変更を受け、変更は PR で出す。",
+  "skills": [
+    { "id": "ingest", "name": "取り込み", "description": "原文（ファイルや会話）を Wiki に取り込み、PR を出す。" },
+    { "id": "query", "name": "問い合わせ", "description": "Wiki の知識から答える。" },
+    { "id": "lint", "name": "整理", "description": "Wiki の矛盾や孤立したページを見つけて直し、PR を出す。" },
+    { "id": "publish", "name": "公開", "description": "ページの公開範囲を変え、PR を出す。" }
+  ],
+  "publicUrl": "https://agents.example.test/wiki-keeper/",
+  "allowedCallers": [
+    "system:serviceaccount:fraction-agents:owner",
+    "system:serviceaccount:fraction-agents:claude",
+    "system:serviceaccount:fraction-agents:natsumi"
+  ],
+  "agentDir": "/agent",
+  "dataDir": "/data",
+  "contextWorkspace": {
+    "prepare": ["node", "/opt/fraction-agents/pi-package/bin/workspace.ts", "prepare"],
+    "remove": ["node", "/opt/fraction-agents/pi-package/bin/workspace.ts", "remove"]
+  }
+}

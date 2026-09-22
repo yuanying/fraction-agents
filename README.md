@@ -34,13 +34,16 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
   - 同じ context の次の Task は同じプロセスに送る。プロセスが落ちていれば、同じファイルで起動し直して続ける。
   - 1 つの context で同時に走る Task は 1 つだけである。走っている間に同じ context へ送った Task は `REJECTED` で返す。
   - 一定時間使われなかったプロセスは止める。一定期間使われなかった context は、セッションのファイルと Task の記録ごと消す。
+  - 設定の `contextWorkspace` があれば、context ごとに `<workDir>/<contextId>` で pi を動かす（下の「context ごとの作業ディレクトリ」）。
 - 1 つの Task は、pi への 1 回の prompt である。
   - 最後の assistant の文を、`response` という名前の artifact として返す。
   - モデルの呼び出しが失敗したら `FAILED`、pi が途中で終了したら `FAILED`、CancelTask で止めたら `CANCELED` になる。
-  - Task は追加の入力を待たない。続きは、同じ contextId で新しいメッセージを送る。taskId を指定したメッセージは受け付けない。
+  - 続きの依頼は、同じ contextId で新しいメッセージを送る。
+  - pi の中の拡張が呼び出し元に質問したとき（下の「聞き返し」）だけ、Task は `INPUT_REQUIRED` で止まる。
+    その Task の taskId を付けたメッセージが答えになる。それ以外の Task に taskId を付けたメッセージは受け付けない。
 - 結果は、`returnImmediately` ですぐ返してから GetTask で取りに行く使い方を基本とする。ストリーミングと push 通知は出していない。
 - Task と context の記録は SQLite に持つので、ホストを再起動しても GetTask と ListTasks で取れる。
-  再起動の時点で走っていた Task は `FAILED` にする。ListTasks は呼び出し元の Task だけを返す。
+  再起動の時点で走っていた Task と答えを待っていた Task は `FAILED` にする。ListTasks は呼び出し元の Task だけを返す。
 
 ### 設定
 
@@ -62,6 +65,8 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 | `sessionRetentionSeconds` | | `604800`（7 日） | 使われなくなった context を消すまでの秒数 |
 | `piCommand` | | `["pi"]` | pi を起動するコマンド。後ろに `--mode rpc --session <file>` を足して起動する |
 | `passEnv` | | `[]` | 既定の最小限に加えて pi に渡す環境変数の名前。名前だけを書き、値はホストの環境から取る |
+| `inputTimeoutSeconds` | | `86400`（1 日） | 質問への答えを待つ秒数。過ぎたら質問を取り下げ、Task を `FAILED` にする |
+| `contextWorkspace` | | なし | context ごとの作業ディレクトリを用意するコマンド。`prepare`（必須）と `remove` の 2 つで、どちらもコマンドの配列 |
 
 例:
 
@@ -103,6 +108,7 @@ TokenReview には Pod の ServiceAccount の token（`/var/run/secrets/kubernet
 |---|---|
 | `PI_CODING_AGENT_DIR` | 設定の `agentDir` |
 | `FRACTION_AGENTS_CALLER` | その context の呼び出し元の名前（`system:serviceaccount:<namespace>:<name>`）。Pi の拡張は、これを見て呼び出し元ごとに振る舞いを変えられる |
+| `FRACTION_AGENTS_CONTEXT_ID` | その context の ID。ホストが採番したもの |
 
 ホストの環境に資格（`OPENAI_API_KEY`、`HF_TOKEN` など）があっても、`passEnv` に書かない限り pi には渡らない。
 エージェントに資格を渡すときは、その名前を `passEnv` に書く。
@@ -110,6 +116,37 @@ TokenReview には Pod の ServiceAccount の token（`/var/run/secrets/kubernet
 
 Pod の ServiceAccount の token（`/var/run/secrets/kubernetes.io/serviceaccount/`）は、pi の bash からも読める。
 エージェントの ServiceAccount には TokenReview に要る権限（`system:auth-delegator`）だけを与え、ほかの権限を持たせない。
+
+### context ごとの作業ディレクトリ
+
+設定に `contextWorkspace` を書くと、pi は context ごとに `<workDir>/<contextId>` で動く。
+Wiki 管理人のように、context ごとに git の worktree を持つエージェントのための仕組みである。
+
+- pi を起動する前に毎回、`prepare` のコマンドに、そのディレクトリのパスを最後の引数として付けて実行する。
+  コマンドは、そのディレクトリを pi が動ける状態にする。すでに用意されていれば、そのまま残す。
+- コマンドの環境は pi と同じ（上の 3 種類）で、ホストの秘密は渡らない。
+- コマンドが失敗したら、pi を起動せずに Task を `FAILED` にする。理由には、コマンドの標準エラーの最後の行を載せる。
+- context を消すときに、`remove` のコマンドを同じ形で実行し、残ったディレクトリを消す。
+  ホストの知らない context の名前のディレクトリ（途中で落ちて残ったもの）も、同じように片付ける。
+- ディレクトリ名には、ホストが採番した context ID（UUID の形）だけを使う。
+
+### 聞き返し
+
+pi の拡張が `ctx.ui.input` か `ctx.ui.editor` で質問すると（RPC の `extension_ui_request`）、ホストは Task を `INPUT_REQUIRED` にし、
+質問の文を状態のメッセージに載せる。
+
+- 呼び出し元は、同じ taskId を付けたメッセージで答える。答えは同じ pi のプロセスの同じ prompt に渡り、作業が続く。
+  1 つの Task で何度でも聞ける。
+- 答えを待つ間、その context は塞がっている。新しい Task を送ると、待っている Task の ID を添えて `REJECTED` を返す。
+- CancelTask で止めると `CANCELED` になる。`inputTimeoutSeconds` の間に答えが無ければ、質問を取り下げて `FAILED` にする。
+- 選択（`select`）と確認（`confirm`）のダイアログは、A2A の文の答えに対応しないので、すぐに取り下げる。
+
+`a2a-cli` で答える例:
+
+```bash
+a2a task get -a https://agents.example.test/wiki-keeper/ <task-id>      # 状態が INPUT_REQUIRED なら、メッセージが質問
+a2a send -a https://agents.example.test/wiki-keeper/ --task-id <task-id> "index の方です"
+```
 
 ### 起動
 
@@ -124,6 +161,7 @@ node dist/src/main.js --config /path/to/config.json
 TokenReview を呼ぶので、Kubernetes の Pod の中で動かす前提である。
 
 image は `Dockerfile` で作る。Node 24 の slim に、このホストと `@earendil-works/pi-coding-agent` 0.87.0（`pi` のコマンド）を入れる。
+fraction-agents の Pi パッケージ（下の「Pi パッケージ」）も `/opt/fraction-agents/pi-package` に入る。
 `node` ユーザーで動き、`/data` と `/agent` をマウント先として用意してある。設定は `/etc/fraction-agents/config.json` に置く。
 
 ```bash
@@ -151,6 +189,7 @@ npm run build
 ```
 
 テストは本物の pi も Kubernetes も使わない。RPC の JSONL を話す偽の pi（`test/fixtures/fake-pi.ts`）と、偽の TokenReview で動かす。
+Pi パッケージのテストは、ローカルの bare repository を GitHub の代わりにし、GitHub の API は偽物かローカルの HTTP サーバーで代える。
 
 ## エージェントを呼ぶ（呼び出し元の準備）
 
@@ -239,3 +278,91 @@ node skills/fraction-agents/scripts/agent.mjs wiki-keeper task get <task-id> --w
 - URL と token は、環境変数 `A2ACLI_AGENT_CARD` と `A2ACLI_AUTH` で `a2a` に渡す。コマンド行には出ないので、`ps` やトランスクリプトに token が残らない。
   ほかの引数は、そのまま `a2a` に渡る。`a2a` の出力と終了コードも、そのまま返る。
 - 補助スクリプトのテスト（`test/skill-agent.test.ts`）は `npm test` で走る。本物の `a2a` の代わりに、起動のされ方を記録する偽の `a2a` を使う。
+
+## Pi パッケージ
+
+`pi-package/` は、エージェントが共通で使う Pi の拡張をまとめた Pi パッケージである（ADR 0008）。
+image の `/opt/fraction-agents/pi-package` に入り、エージェントは settings.json の `packages` にこのパスを書いて読む。
+パッケージの版は image の版と同じになる。
+
+| 拡張 | 中身 |
+|---|---|
+| `github-gate` | GitHub への書き込みの門番（ADR 0009）。agentDir に `github-gate.json` があるときだけ働く |
+| `ask-caller` | 呼び出し元に質問するツール `ask_caller`。汎用ホストの「聞き返し」で `INPUT_REQUIRED` になる |
+
+### GitHub の門番
+
+- GitHub への書き込みは、拡張の出す 3 つのツールだけで行う。
+  - `github_push`: いまのブランチを push する。既定のブランチと、`branchPrefix` で始まらないブランチは push しない。force push はしない。
+  - `github_pull_request`: push して、そのブランチの PR を作る。PR があれば、同じ PR に積んでタイトルと本文を更新する。1 つの context に 1 つの PR になる。
+  - `github_merge`: 最新の既定のブランチを取り込んでから、PR をマージする。
+    呼び出し元（`FRACTION_AGENTS_CALLER`）が `mergeCallers` にあるときだけ、ツールが登録される。
+- push の前に、既定のブランチから分かれた後のブランチ全体の差分を見て、次のものがあれば push しない。
+  - `appendOnlyPaths` の下の、既存のファイルの変更・削除（追加は許す）。名前の変更は、削除と追加として扱う
+  - `readOnlyPaths` の下の、追加・変更・削除
+- マージで既定のブランチを取り込むときの衝突
+  - 衝突が `mechanicalConflictPaths` のファイルだけなら、マージを途中で止めてその旨を返す。エージェントが解消して `git add` し、もう一度呼べばマージする。
+  - それ以外のファイルが衝突したら、取り込みをやめてブランチを元に戻し、マージしないで返す。
+- PR がマージされた後や閉じられた後に同じ context で書き込むと、`<branchPrefix><contextId>-2` のような新しいブランチを最新の既定のブランチから作り、
+  前回の push の後の commit だけを移して、新しい PR にする。
+- `tool_call` のフックで、pi の組み込みのツールを止める。止めるのは次のものである。
+  - `write`・`edit` による `readOnlyPaths` の下への書き込みと、`appendOnlyPaths` の下の既存のファイルへの書き込み
+  - bash の `git push`・`gh pr merge`・マージの API の呼び出し、`rm`・`mv`・`sed -i`・リダイレクトなどで保護したパスを変えるコマンド
+
+  これは二重の守りである。bash には GitHub の資格が無いので、これを迂回しても push はできない。
+  逆に、コマンドの書き方を変えればフックは迂回できる（ADR 0009 で受け入れている）。
+- `skillPaths` に書いた作業ディレクトリの中のスキル（例: `.claude/skills`）を pi に読ませる。
+
+### GitHub App の token
+
+- 拡張が、App の秘密鍵（`app.privateKeyFile`）で JWT を作り、installation token を発行する。
+  token の対象は設定の 1 つのリポジトリだけで、権限は contents と pull requests の書き込みに絞る。
+- token は pi のプロセスのメモリにだけ持ち、切れる 5 分前に発行し直す。
+- git には、その 1 回の git のプロセスの環境変数（`GIT_CONFIG_*`）で Authorization のヘッダを渡す。
+  pi の環境変数、bash、ファイル、git の設定には token を置かない。remote の URL にも資格は入れない。
+- 秘密鍵のファイルは、同じコンテナの bash からも読める。鍵で自前の token を作れば門番を迂回できる。この穴は ADR 0009 で受け入れている。
+
+### `github-gate.json`
+
+agentDir に置く。秘密は置かない。例は `agents/wiki-keeper/github-gate.example.json`。
+
+| 項目 | 必須 | 既定 | 意味 |
+|---|---|---|---|
+| `repository.owner`・`repository.name` | 必須 | | 書き込むリポジトリ |
+| `repository.defaultBranch` | | `main` | 既定のブランチ |
+| `repository.remoteUrl` | | `https://github.com/<owner>/<name>.git` | git の remote |
+| `apiUrl` | | `https://api.github.com` | REST API |
+| `app.appId`・`app.installationId`・`app.privateKeyFile` | 必須 | | GitHub App の ID、installation の ID、秘密鍵のファイル |
+| `clone` | 必須 | | 永続の clone（bare）のパス。PVC の上に置く |
+| `branchPrefix` | 必須 | | エージェントのブランチの接頭辞 |
+| `commitIdentity.name`・`commitIdentity.email` | 必須 | | エージェントの commit の名前とメール |
+| `appendOnlyPaths` | | `[]` | 追加だけを許すパス |
+| `readOnlyPaths` | | `[]` | すべての変更を拒否するパス |
+| `mechanicalConflictPaths` | | `[]` | マージの衝突をエージェントが解消してよいファイル |
+| `mergeCallers` | | `[]` | `github_merge` を出す呼び出し元 |
+| `mergeMethod` | | `merge` | `merge`・`squash`・`rebase` |
+| `skillPaths` | | `[]` | pi に読ませる、作業ディレクトリの中のスキルのディレクトリ |
+
+パスは、名前が `/` で終わっていてもいなくても、そのパス自身とその下のすべてを指す。
+
+### context ごとの worktree
+
+`pi-package/bin/workspace.ts` は、汎用ホストの `contextWorkspace` から呼ぶコマンドである。
+
+- `prepare <dir>`: 永続の clone が無ければ作り、fetch する。`<dir>` にその context の worktree が無ければ、
+  context のブランチ（初めてなら `<branchPrefix><contextId>` を最新の既定のブランチから）で作る。あれば、そのまま残す。
+- `remove <dir>`: worktree と、その context のローカルのブランチを消す。push したものは GitHub に残る。
+
+設定の例:
+
+```json
+"contextWorkspace": {
+  "prepare": ["node", "/opt/fraction-agents/pi-package/bin/workspace.ts", "prepare"],
+  "remove": ["node", "/opt/fraction-agents/pi-package/bin/workspace.ts", "remove"]
+}
+```
+
+## Wiki 管理人
+
+`agents/wiki-keeper/` に、Wiki 管理人の agentDir の中身の雛形と、汎用ホストの設定の例を置く。
+リポジトリの URL や App の ID など環境ごとの値は、private の overlay で渡す（ADR 0010）。詳しくは `agents/wiki-keeper/README.md`。

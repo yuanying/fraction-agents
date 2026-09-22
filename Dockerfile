@@ -20,6 +20,12 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist/src ./dist/src
+# The fraction-agents Pi package (ADR 0008). Agents load it by this path from their settings, so its version is
+# the image's. Its TypeScript runs as is: pi loads the extensions, and node runs the workspace command.
+COPY pi-package/package.json /opt/fraction-agents/pi-package/package.json
+COPY pi-package/extensions /opt/fraction-agents/pi-package/extensions
+COPY pi-package/lib /opt/fraction-agents/pi-package/lib
+COPY pi-package/bin /opt/fraction-agents/pi-package/bin
 # Mount points for the host's data (tasks, sessions, pi's working directory) and pi's agent directory.
 # A new volume inherits this ownership and mode, so the unprivileged user can write without running as root.
 RUN mkdir -p /data /agent \

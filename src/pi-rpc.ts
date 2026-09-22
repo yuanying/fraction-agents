@@ -34,6 +34,24 @@ interface AssistantMessage {
 
 type RpcEvent = { type: string; message?: { role?: string } } & Record<string, unknown>;
 
+/** A free-form question an extension put to the user (`ctx.ui.input` or `ctx.ui.editor`), waiting for an answer. */
+export interface DialogRequest {
+  id: string;
+  text: string;
+}
+
+interface UiRequest {
+  type: "extension_ui_request";
+  id: string;
+  method: string;
+  title?: string;
+  message?: string;
+}
+
+/** Dialogs that take free-form text: these go to the caller. Choices and confirmations are dismissed. */
+const QUESTION_METHODS = new Set(["input", "editor"]);
+const DIALOG_METHODS = new Set(["input", "editor", "select", "confirm"]);
+
 const STOP_GRACE_MS = 5_000;
 
 /**
@@ -47,6 +65,8 @@ export class PiRpcProcess {
   readonly #exited: Promise<string>;
   #nextId = 1;
   #alive = true;
+  /** Where questions go while a prompt runs. Outside a prompt nobody could answer, so they are dismissed. */
+  #onQuestion: ((request: DialogRequest) => void) | undefined;
 
   constructor(options: PiRpcOptions) {
     const [program, ...args] = options.command;
@@ -110,7 +130,7 @@ export class PiRpcProcess {
    * Sends a prompt and waits until pi settles (`agent_settled`: no retry, compaction or queued message remains).
    * The outcome comes from the last assistant message of the run.
    */
-  async prompt(message: string): Promise<PromptOutcome> {
+  async prompt(message: string, onQuestion?: (request: DialogRequest) => void): Promise<PromptOutcome> {
     let last: AssistantMessage | undefined;
     let settle!: () => void;
     const settled = new Promise<void>((resolve) => (settle = resolve));
@@ -119,6 +139,7 @@ export class PiRpcProcess {
       if (event.type === "agent_settled") settle();
     };
     this.#listeners.add(listener);
+    this.#onQuestion = onQuestion;
     try {
       const response = await this.request({ type: "prompt", message });
       if (!response.success) return { status: "failed", error: response.error ?? "pi refused the prompt" };
@@ -128,6 +149,7 @@ export class PiRpcProcess {
       return { status: "failed", error: error instanceof Error ? error.message : String(error) };
     } finally {
       this.#listeners.delete(listener);
+      this.#onQuestion = undefined;
     }
     if (!last) return { status: "failed", error: "pi finished without a reply" };
     if (last.stopReason === "aborted") return { status: "aborted" };
@@ -137,6 +159,13 @@ export class PiRpcProcess {
       .map((part) => part.text)
       .join("");
     return { status: "completed", text };
+  }
+
+  /** Answers a dialog, or dismisses it when there is no answer. */
+  respondDialog(id: string, answer: string | undefined): void {
+    if (!this.#alive) return;
+    const response = answer === undefined ? { cancelled: true } : { value: answer };
+    this.#child.stdin.write(`${JSON.stringify({ type: "extension_ui_response", id, ...response })}\n`);
   }
 
   /** Asks pi to abort the running prompt. The prompt then settles as aborted. */
@@ -168,6 +197,21 @@ export class PiRpcProcess {
       if (response.id !== undefined) this.#pending.get(response.id)?.(response);
       return;
     }
+    if (record.type === "extension_ui_request") {
+      this.#dialog(record as unknown as UiRequest);
+      return;
+    }
     for (const listener of this.#listeners) listener(record as RpcEvent);
+  }
+
+  #dialog(request: UiRequest): void {
+    // Notifications, status and widgets need no response; there is no screen to show them on.
+    if (!DIALOG_METHODS.has(request.method)) return;
+    if (QUESTION_METHODS.has(request.method) && this.#onQuestion) {
+      const text = [request.title, request.message].filter((part) => part !== undefined && part !== "").join("\n\n");
+      this.#onQuestion({ id: request.id, text });
+      return;
+    }
+    this.respondDialog(request.id, undefined);
   }
 }
