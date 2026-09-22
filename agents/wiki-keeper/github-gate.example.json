@@ -1,0 +1,27 @@
+{
+  "repository": {
+    "owner": "example-owner",
+    "name": "example-wiki",
+    "defaultBranch": "main"
+  },
+  "app": {
+    "appId": "123456",
+    "installationId": "12345678",
+    "privateKeyFile": "/var/run/secrets/github-app/private-key.pem"
+  },
+  "clone": "/data/wiki.git",
+  "branchPrefix": "wiki-keeper/",
+  "commitIdentity": {
+    "name": "example-app[bot]",
+    "email": "123456+example-app[bot]@users.noreply.github.com"
+  },
+  "appendOnlyPaths": ["raw/"],
+  "readOnlyPaths": ["Permanent-Notes/"],
+  "mechanicalConflictPaths": ["wiki/index.md", "wiki/log.md"],
+  "mergeCallers": [
+    "system:serviceaccount:fraction-agents:owner",
+    "system:serviceaccount:fraction-agents:claude"
+  ],
+  "mergeMethod": "merge",
+  "skillPaths": [".claude/skills"]
+}
