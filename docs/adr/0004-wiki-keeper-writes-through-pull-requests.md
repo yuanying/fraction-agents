@@ -1,7 +1,7 @@
 # 0004. Wiki 管理人は PR で書き込み、マージは本人の指示でだけ行う
 
 - Date: 2026-09-22
-- Status: Accepted
+- Status: Accepted（`raw/` の扱いは ADR 0009 で置き換えた。「まだ決めていないこと」の置き方と強制は ADR 0009 で決めた）
 
 ## Context
 

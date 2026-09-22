@@ -1,7 +1,7 @@
 # 0001. エージェントを独立したサービスとして飼い、A2A で話す
 
 - Date: 2026-09-22
-- Status: Accepted
+- Status: Accepted（「Claude と Codex のための橋」は ADR 0005 で置き換えた。本文の MCP の橋への言及は ADR 0005 のとおり読み替える）
 
 ## Context
 
