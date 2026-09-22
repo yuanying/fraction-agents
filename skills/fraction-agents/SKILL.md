@@ -2,9 +2,10 @@
 name: fraction-agents
 description: >-
   fraction-agents の特化エージェント（Wiki 管理人など、Kubernetes で動く A2A のエージェント）に
-  仕事を頼み、結果を受け取る。a2a-cli を、エージェントの名前だけで、token を表に出さずに使う。
+  仕事を頼み、結果を受け取り、エージェントからの聞き返しに答える。a2a-cli を、エージェントの名前だけで、
+  token を表に出さずに使う。
   Use when asked to delegate work to a fraction-agents agent (e.g. "Wiki 管理人に頼んで",
-  "wiki-keeper に取り込ませて"), to list those agents, or to check, continue or cancel
+  "wiki-keeper に取り込ませて"), to list those agents, or to check, answer, continue or cancel
   a task sent to one of them.
 compatibility: >-
   Requires the a2a command (a2a-cli v0.2.0) and node on PATH, and the caller's local config
@@ -69,7 +70,7 @@ agent wiki-keeper send --async "この記事を取り込んで: <URL や本文>"
 agent wiki-keeper task get <taskId> --wait --timeout 5m
 ```
 
-- 終わった（`completed`・`failed`・`canceled`・`rejected`）ところで戻る。
+- 終わった（`completed`・`failed`・`canceled`・`rejected`）ところか、エージェントが聞き返してきた（`input-required`）ところで戻る。
 - 5 分で終わらなければ、終了コード 5（`A2ACLI_ERR_TIMEOUT`）で戻る。Task は動き続けているので、同じコマンドをもう一度実行する。
   Bash の呼び出しに時間の上限がある環境では、`--timeout` をその上限より短くする。
 - 待たずに今の状態だけを見るなら `--wait` を外す。
@@ -82,19 +83,21 @@ agent wiki-keeper task get <taskId> --wait --timeout 5m
 | `Status:` | 意味 | すること |
 |---|---|---|
 | `submitted`・`working` | まだ動いている | `task get --wait` で待つ |
+| `input-required` | エージェントが聞き返している。答えるまで止まっている | 次の行の質問を読み、「聞き返しに答える」に従う |
 | `completed` | 終わった | `Artifacts:` の `response` がエージェントの返事（最後の発言）である |
 | `failed` | 失敗した | 次の行に理由がある。モデルの呼び出しの失敗や、エージェントのプロセスの異常終了 |
 | `canceled` | `task cancel` で止めた | |
-| `rejected` | 受け付けられなかった | 次の行の理由を読む。多いのは次の「busy」 |
+| `rejected` | 受け付けられなかった | 次の行の理由を読む。多いのは「busy」と、答えを待っている Task がある場合（「busy のとき」） |
 
 機械で読むときは `-o json` を付ける（`send` は `task` の下に、`task get` は Task そのものが出る。
-状態は `status.state` の `TASK_STATE_COMPLETED` など、返事は `artifacts[].parts[].text`）。
+状態は `status.state` の `TASK_STATE_COMPLETED` など、返事は `artifacts[].parts[].text`、
+聞き返しの質問は `status.message.parts[].text`）。
 
 `a2a` 自体が失敗したときの終了コード:
 
 | 終了コード | 意味 |
 |---|---|
-| 1 | エージェントがエラーを返した（`TASK_NOT_FOUND`、知らない contextId、taskId 付きのメッセージなど）。認証の失敗もここに出る |
+| 1 | エージェントがエラーを返した（`TASK_NOT_FOUND`、知らない contextId、答えを待っていない Task への `--task-id` など）。認証の失敗もここに出る |
 | 2 | 引数の誤り |
 | 3 | 届かない（DNS、接続、TLS）。URL が正しいか、エージェントが動いているかを確かめる |
 | 4 | Agent Card が取れない、または壊れている |
@@ -108,10 +111,30 @@ agent wiki-keeper send --async --context-id <contextId> "続けて、関連ペ�
 ```
 
 - 同じ contextId で送ると、エージェントは前の会話を覚えたまま続ける。新しい Task が作られるので、その taskId を待つ。
-- `--task-id` は使わない。このエージェントたちの Task は追加の入力を待たないので、taskId 付きのメッセージは断られる。
+- `--task-id` は続きの依頼には使わない。`--task-id` で送れるのは、`input-required` で答えを待っている Task への答えだけである
+  （「聞き返しに答える」）。それ以外の Task に送るとエラーになる。
 - contextId はエージェントが採番する。続けられるのは、自分が前に受け取った contextId だけである。
 - しばらく（既定で 7 日）使わなかった context は消える。知らない contextId として断られたら、`--context-id` を外して新しく送る。
   前の文脈は残っていないので、要点を依頼文に書き直す。
+
+## 聞き返しに答える
+
+エージェントは、判断に迷うと依頼の途中で聞き返すことがある。そのとき Task は `input-required` になり、
+`Status:` の次の行に質問が出る。`task get --wait` もここで戻る。Task はエージェントの側で止まったまま、答えを待っている。
+
+1. 質問を読む。依頼の内容や手元の情報から自分で答えられるなら、答える。
+2. 自分では決められないこと（ユーザーの好み、公開してよいか、どちらの案にするかなど）は、推測で答えず、ユーザーに聞いてから答える。
+3. 同じ Task に答えを送る。新しい Task は作られず、エージェントは同じ会話の続きとして仕事を再開する。
+4. 送ったら、同じ taskId を `task get --wait` で待つ。また聞き返されたら、1 から繰り返す。
+
+```bash
+agent wiki-keeper send --async --task-id <taskId> "ページ名は「A2A」にして"
+agent wiki-keeper task get <taskId> --wait --timeout 5m
+```
+
+- 答えは、質問への返事だけでなく、それだけ読めば分かる文にする。
+- 答えるのをやめるなら `task cancel <taskId>` で止める。放っておくと、既定で 1 日後に `failed` になる。
+- 答えを待っている間、同じ context に新しい依頼は送れない（次の「busy のとき」）。
 
 ## busy のとき
 
@@ -121,6 +144,10 @@ agent wiki-keeper send --async --context-id <contextId> "続けて、関連ペ�
 1. 動いている Task を探す: `agent wiki-keeper task list --context <contextId> --status working`
 2. それを `task get <taskId> --wait` で待つ。
 3. 終わったら、同じ依頼をもう一度送る。
+
+同じ context の Task が答えを待っている（`input-required`）ときは、`rejected` の理由に
+「This context is waiting for an answer to task <taskId>」と、待っている taskId が出る。
+その Task に `--task-id` で答えるか、`task cancel` で止めてから、依頼を送り直す。
 
 文脈が要らない別の依頼なら、`--context-id` を外して新しい context で送ってよい。
 続きの依頼を、busy を避けるために新しい context へ送ってはいけない（前の文脈が無いまま動いてしまう）。
@@ -146,4 +173,4 @@ fraction-agents を呼ぶ場合に置き換えるものである。違いは次�
 
 - URL と token を名前から引く。token をコマンド行に出さない。
 - 送信は必ず `--async` にし、`task get --wait` で取りに行く。
-- `--task-id` で続けず、`--context-id` で続ける。busy の扱いがある。
+- 続きの依頼は `--context-id` で送る。`--task-id` は、聞き返し（`input-required`）への答えにだけ使う。busy の扱いがある。

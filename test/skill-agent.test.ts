@@ -119,6 +119,17 @@ describe("skills/fraction-agents/scripts/agent.mjs", () => {
     assert.ok(!result.stderr.includes(token));
   });
 
+  it("passes --task-id through so an input-required task can be answered", () => {
+    const e = setup();
+    standard(e);
+    const result = run(e, ["wiki-keeper", "send", "--async", "--task-id", "task-1", "ページ名は「A2A」で"]);
+    assert.equal(result.status, 0, result.stderr);
+    const r = recorded(e);
+    assert.deepEqual(r.argv, ["send", "--async", "--task-id", "task-1", "ページ名は「A2A」で"]);
+    assert.equal(r.agentCard, "https://agents.example.test/wiki-keeper/");
+    assert.equal(r.auth, `Bearer ${token}`);
+  });
+
   it("passes a2a's output and exit status through", () => {
     const e = setup();
     standard(e);
