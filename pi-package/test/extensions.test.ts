@@ -80,7 +80,7 @@ describe("GitHub gate extension", () => {
 
   it("opens a pull request and merges it through the tools", async () => {
     const { fixture, cwd, pi } = await setUp(OWNER);
-    write(cwd, "raw/memos/2026-09-22-talk.md", "a talk\n");
+    write(cwd, "raw/memos/2026/09/natsumi-talk-20260922.md", "a talk\n");
     git(cwd, "add", ".");
     git(cwd, "commit", "-q", "-m", "Add a memo");
     assert.match(await pi.call("github_pull_request", { title: "Add a memo", body: "From a talk" }, context(cwd)), /Opened pull request #1/);

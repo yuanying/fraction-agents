@@ -88,7 +88,7 @@ describe("push", () => {
   it("pushes a new file under raw/ to the context's branch", async () => {
     const fixture = makeFixture();
     const dir = await workspace(fixture);
-    commit(dir, { "raw/memos/2026-09-22-talk.md": "what we talked about\n" }, "Add a memo");
+    commit(dir, { "raw/memos/2026/09/natsumi-talk-20260922.md": "what we talked about\n" }, "Add a memo");
     const result = await gate(fixture, dir).push();
     assert.match(result, /Pushed/);
     assert.equal(remoteBranch(fixture, `wiki-keeper/${CONTEXT}`), git(dir, "rev-parse", "HEAD"));

@@ -14,7 +14,7 @@ describe("changes to push", () => {
     assert.deepEqual(
       checkChanges(
         [
-          { status: "A", path: "raw/memos/2026-09-22-talk.md" },
+          { status: "A", path: "raw/memos/2026/09/natsumi-talk-20260922.md" },
           { status: "M", path: "wiki/index.md" },
           { status: "D", path: "wiki/topics/old.md" },
           { status: "A", path: "rawish/notes.md" },
@@ -140,8 +140,8 @@ describe("bash", () => {
       "grep -r kubernetes Permanent-Notes raw",
       "git log -- raw/",
       "git status",
-      "cp /tmp/talk.md raw/memos/2026-09-22-talk.md",
-      "git add raw/memos/2026-09-22-talk.md && git commit -m 'Add a memo'",
+      "cp /tmp/talk.md raw/memos/2026/09/natsumi-talk-20260922.md",
+      "git add raw/memos/2026/09/natsumi-talk-20260922.md && git commit -m 'Add a memo'",
       "git diff origin/main -- wiki/",
     ]) {
       assert.equal(blocked(command), undefined, command);
