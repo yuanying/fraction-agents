@@ -15,3 +15,4 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0006. エージェントは既存の Ingress でインターネットに出し、守りは認証に任せる](docs/adr/0006-expose-agents-through-ingress.md)
 - [0007. 汎用ホストは A2A のアダプタが context ごとに Pi を子プロセスで動かす](docs/adr/0007-generic-host-runs-pi-per-context.md)
 - [0008. エージェントの定義は Pi の agentDir で持ち、ログインはエージェントごとに分ける](docs/adr/0008-agent-definition-as-pi-agent-dir.md)
+- [0009. Wiki 管理人の置き方と、GitHub への書き込みの門番](docs/adr/0009-wiki-keeper-placement-and-gatekeeping.md)
