@@ -151,3 +151,91 @@ npm run build
 ```
 
 テストは本物の pi も Kubernetes も使わない。RPC の JSONL を話す偽の pi（`test/fixtures/fake-pi.ts`）と、偽の TokenReview で動かす。
+
+## エージェントを呼ぶ（呼び出し元の準備）
+
+Claude・Codex・Pi からは、公式の `a2a-cli` と、このリポジトリの共通のスキル [`skills/fraction-agents`](skills/fraction-agents/SKILL.md) でエージェントを呼ぶ（ADR 0005）。
+スキルの補助スクリプト `scripts/agent.mjs` が、エージェントの名前から URL と token を引いて `a2a` を起動する。
+URL と token はこのリポジトリに書かず、呼び出し元の手元に置く。
+
+### a2a-cli を入れる
+
+版は v0.2.0 に固定する。スキルの手順と終了コードの読み方は、この版で確かめてある。
+
+- リリースのバイナリ（推奨）: [v0.2.0 のリリース](https://github.com/a2aproject/a2a-cli/releases/tag/v0.2.0)から、OS と CPU に合う `a2a_0.2.0_<os>_<arch>.tar.gz` と `checksums.txt` を取る。
+  `sha256sum -c`（macOS は `shasum -a 256 -c`）で確かめてから展開し、`a2a` を `PATH` の通った場所に置く。
+- ソースから: `go install github.com/a2aproject/a2a-cli@v0.2.0`。コマンド名が `a2a-cli` になるので、`a2a` に名前を変える。
+
+Homebrew は最新版を入れるので、版を固定できない。`a2a version` で `0.2.0` と出ることを確かめる。
+補助スクリプトは `node` で動くので、`node`（22 以降）も要る。
+
+### token を発行する
+
+呼び出し元ごとに、名前空間 `fraction-agents` の ServiceAccount がある（例 `owner`、`claude`。ADR 0003）。
+呼ぶエージェントの設定の `allowedCallers` に、その ServiceAccount が入っている必要がある。
+
+クラスタに入れる人が、audience `a2a` の期限つきの token を発行し、呼び出し元の手元のファイルに書く。
+期限は 90 日を目安にする（apiserver の設定によっては、それより短く切り詰められる）。
+
+```bash
+mkdir -p -m 0700 ~/.config/fraction-agents/tokens
+(umask 077; kubectl create token claude -n fraction-agents --audience a2a --duration 2160h \
+  > ~/.config/fraction-agents/tokens/claude)
+```
+
+- token は画面に出さず、そのままファイルに書く。ファイルの権限は 0600（ディレクトリは 0700）にする。
+  補助スクリプトは、所有者以外が読める token のファイルを使わずに断る。
+- token のファイルを Git の管理下や、同期されるフォルダに置かない。
+- 期限が来たら、同じ手順で発行し直して上書きする。
+
+### 設定ファイル
+
+補助スクリプトは、次の順で最初に見つかった場所の JSON を読む。
+
+1. 環境変数 `FRACTION_AGENTS_CLIENT_CONFIG` のパス
+2. `$XDG_CONFIG_HOME/fraction-agents/agents.json`
+3. `~/.config/fraction-agents/agents.json`
+
+| 項目 | 必須 | 意味 |
+|---|---|---|
+| `agents` | 必須 | エージェントの名前から設定への対応。名前は呼び出し元が付ける呼び名で、スキルの `agent <名前>` に使う |
+| `agents.<名前>.url` | 必須 | エージェントの URL（汎用ホストの設定の `publicUrl`）。Agent Card はこの下の `/.well-known/agent-card.json` から取る |
+| `agents.<名前>.tokenFile` | | このエージェントにだけ使う token のファイル。無ければ上の階層の `tokenFile` を使う |
+| `tokenFile` | | 既定の token のファイル。呼び出し元の token は 1 つなので、普通はここに 1 つ書く |
+
+`tokenFile` は、`~/` で始まればホームディレクトリから、相対パスなら設定ファイルのあるディレクトリから辿る。
+設定ファイル自体に秘密は無いが、token は必ず別のファイルに置く。
+
+例:
+
+```json
+{
+  "tokenFile": "~/.config/fraction-agents/tokens/claude",
+  "agents": {
+    "wiki-keeper": { "url": "https://agents.example.test/wiki-keeper/" }
+  }
+}
+```
+
+### スキルを置く
+
+スキルは、呼び出し元がスキルを探す場所に、ディレクトリごとリンクする。
+
+- Claude Code: `~/.claude/skills/fraction-agents`
+- Codex・Pi: `~/.agents/skills/fraction-agents`
+
+```bash
+ln -s <このリポジトリ>/skills/fraction-agents ~/.claude/skills/fraction-agents
+```
+
+補助スクリプトは単独でも使える。
+
+```bash
+node skills/fraction-agents/scripts/agent.mjs --list
+node skills/fraction-agents/scripts/agent.mjs wiki-keeper send --async "この記事を取り込んで"
+node skills/fraction-agents/scripts/agent.mjs wiki-keeper task get <task-id> --wait --timeout 5m
+```
+
+- URL と token は、環境変数 `A2ACLI_AGENT_CARD` と `A2ACLI_AUTH` で `a2a` に渡す。コマンド行には出ないので、`ps` やトランスクリプトに token が残らない。
+  ほかの引数は、そのまま `a2a` に渡る。`a2a` の出力と終了コードも、そのまま返る。
+- 補助スクリプトのテスト（`test/skill-agent.test.ts`）は `npm test` で走る。本物の `a2a` の代わりに、起動のされ方を記録する偽の `a2a` を使う。
