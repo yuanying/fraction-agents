@@ -1,7 +1,11 @@
 import { PiRpcProcess, type PromptOutcome } from "./pi-rpc.ts";
+import type { ContextWorkspaces } from "./workspace.ts";
 
 /** The environment variable that tells pi (and the extensions in it) who called. */
 export const CALLER_ENV = "FRACTION_AGENTS_CALLER";
+
+/** The environment variable that tells pi (and the extensions in it) which context it runs for. */
+export const CONTEXT_ENV = "FRACTION_AGENTS_CONTEXT_ID";
 
 /**
  * What pi gets from the host's environment by default: enough to run, find commands and read the locale and time
@@ -28,19 +32,41 @@ export interface SessionTarget {
   caller: string;
 }
 
-export interface PiSessionsOptions {
-  piCommand: readonly string[];
+export interface PiEnvironmentOptions {
   agentDir: string;
-  workDir: string;
-  idleTimeoutMs: number;
   /** Further environment variable names to pass from the host, on top of {@link PI_BASE_ENV}. */
   passEnv: readonly string[];
 }
 
+/**
+ * The environment pi (and a context's workspace commands) run with: the minimal variables and the configured
+ * names from the host's environment, and what the host tells the agent. Nothing else of the host's reaches it.
+ */
+export function piEnvironment(options: PiEnvironmentOptions, caller: string, contextId: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const name of [...PI_BASE_ENV, ...options.passEnv]) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  env.PI_CODING_AGENT_DIR = options.agentDir;
+  env[CALLER_ENV] = caller;
+  env[CONTEXT_ENV] = contextId;
+  return env;
+}
+
+export interface PiSessionsOptions extends PiEnvironmentOptions {
+  piCommand: readonly string[];
+  workspaces: ContextWorkspaces;
+  idleTimeoutMs: number;
+}
+
 interface Entry {
-  process: PiRpcProcess;
+  /** Absent until the workspace is prepared and pi is started. */
+  process?: PiRpcProcess;
   /** The task running in this context, if any. One at a time. */
   taskId?: string;
+  /** Set when the task is canceled before pi was started for it. */
+  aborted?: boolean;
   idleTimer?: NodeJS.Timeout;
 }
 
@@ -67,16 +93,27 @@ export class PiSessions {
   run(target: SessionTarget, taskId: string, text: string): Promise<PromptOutcome> | undefined {
     let entry = this.#entries.get(target.contextId);
     if (entry?.taskId !== undefined) return undefined;
-    if (!entry || !entry.process.alive) {
-      entry = { process: this.#start(target) };
+    if (!entry) {
+      entry = {};
       this.#entries.set(target.contextId, entry);
     }
     clearTimeout(entry.idleTimer);
     entry.taskId = taskId;
+    entry.aborted = false;
     const current = entry;
-    return current.process.prompt(text).finally(() => {
+    const outcome = async (): Promise<PromptOutcome> => {
+      if (!current.process?.alive) {
+        const env = piEnvironment(this.#options, target.caller, target.contextId);
+        const prepared = await this.#options.workspaces.prepare(target.contextId, env);
+        if (!prepared.ok) return { status: "failed", error: `The context's workspace could not be prepared: ${prepared.error}` };
+        if (current.aborted) return { status: "aborted" };
+        current.process = this.#start(target, env);
+      }
+      return current.process.prompt(text);
+    };
+    return outcome().finally(() => {
       current.taskId = undefined;
-      if (!current.process.alive) {
+      if (!current.process?.alive) {
         if (this.#entries.get(target.contextId) === current) this.#entries.delete(target.contextId);
         return;
       }
@@ -89,7 +126,8 @@ export class PiSessions {
   async abort(taskId: string): Promise<boolean> {
     for (const entry of this.#entries.values()) {
       if (entry.taskId === taskId) {
-        await entry.process.abort().catch(() => undefined);
+        entry.aborted = true;
+        await entry.process?.abort().catch(() => undefined);
         return true;
       }
     }
@@ -102,30 +140,19 @@ export class PiSessions {
     if (!entry) return;
     this.#entries.delete(contextId);
     clearTimeout(entry.idleTimer);
-    await entry.process.stop();
+    await entry.process?.stop();
   }
 
   async close(): Promise<void> {
     await Promise.all([...this.#entries.keys()].map((contextId) => this.stop(contextId)));
   }
 
-  #environment(caller: string): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = {};
-    for (const name of [...PI_BASE_ENV, ...this.#options.passEnv]) {
-      const value = process.env[name];
-      if (value !== undefined) env[name] = value;
-    }
-    env.PI_CODING_AGENT_DIR = this.#options.agentDir;
-    env[CALLER_ENV] = caller;
-    return env;
-  }
-
-  #start(target: SessionTarget): PiRpcProcess {
+  #start(target: SessionTarget, env: NodeJS.ProcessEnv): PiRpcProcess {
     const process_ = new PiRpcProcess({
       command: this.#options.piCommand,
       sessionPath: target.sessionPath,
-      cwd: this.#options.workDir,
-      env: this.#environment(target.caller),
+      cwd: this.#options.workspaces.dirOf(target.contextId),
+      env,
       logPrefix: `[pi ${target.contextId.slice(0, 8)}]`,
     });
     void process_.exited.then((reason) => {

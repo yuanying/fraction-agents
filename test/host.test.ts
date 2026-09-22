@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -14,6 +14,7 @@ const OWNER = "system:serviceaccount:fraction-agents:owner";
 const CLAUDE = "system:serviceaccount:fraction-agents:claude";
 const STRANGER = "system:serviceaccount:default:stranger";
 const FAKE_PI = resolve(import.meta.dirname, "fixtures/fake-pi.ts");
+const FAKE_HOOK = resolve(import.meta.dirname, "fixtures/fake-hook.ts");
 
 const reviewer: TokenReviewer = {
   async review(token) {
@@ -279,10 +280,16 @@ describe("tasks and contexts", () => {
       for (const name of ["HF_TOKEN", "OPENAI_API_KEY", "EXTRA_DENIED"]) {
         assert.equal(names.includes(name), false, `${name} must not reach pi`);
       }
-      for (const name of ["EXTRA_ALLOWED", "PI_CODING_AGENT_DIR", "FRACTION_AGENTS_CALLER", "PATH", "HOME"]) {
+      for (const name of ["EXTRA_ALLOWED", "PI_CODING_AGENT_DIR", "FRACTION_AGENTS_CALLER", "FRACTION_AGENTS_CONTEXT_ID", "PATH", "HOME"]) {
         assert.equal(names.includes(name), true, `${name} reaches pi`);
       }
-      const allowed = new Set(["EXTRA_ALLOWED", "PI_CODING_AGENT_DIR", "FRACTION_AGENTS_CALLER", ...PI_BASE_ENV]);
+      const allowed = new Set([
+        "EXTRA_ALLOWED",
+        "PI_CODING_AGENT_DIR",
+        "FRACTION_AGENTS_CALLER",
+        "FRACTION_AGENTS_CONTEXT_ID",
+        ...PI_BASE_ENV,
+      ]);
       assert.deepEqual(
         names.filter((name) => !allowed.has(name)),
         [],
@@ -370,5 +377,142 @@ describe("tasks and contexts", () => {
       configuration: { returnImmediately: true },
     });
     assert.ok(body.error, "the expired context cannot be continued");
+  });
+});
+
+interface HookCall {
+  action: string;
+  dir: string;
+  contextId: string;
+  caller: string;
+  env: string[];
+}
+
+function hookCalls(log: string): HookCall[] {
+  return existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
+}
+
+function workspaceConfig(dir: string, overrides: Record<string, unknown> = {}): { config: Config; log: string } {
+  const log = join(dir, "hooks.log");
+  const config = makeConfig(dir, {
+    contextWorkspace: {
+      prepare: [process.execPath, FAKE_HOOK, log, "prepare"],
+      remove: [process.execPath, FAKE_HOOK, log, "remove"],
+    },
+    ...overrides,
+  });
+  return { config, log };
+}
+
+describe("context workspaces", () => {
+  it("runs pi in the shared working directory and tells it the context without a workspace hook", async () => {
+    const { url, config } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "cwd");
+    const reply = JSON.parse(resultText(await waitForTask(url, "owner", task.id)));
+    assert.equal(reply.cwd, config.workDir);
+    assert.equal(reply.contextId, task.contextId);
+  });
+
+  it("prepares a directory of the context's own and runs pi in it", async () => {
+    const { config, log } = workspaceConfig(tempDir());
+    const { url } = await start(config);
+    const task = await send(url, "owner", "cwd");
+    const reply = JSON.parse(resultText(await waitForTask(url, "owner", task.id)));
+    const dir = join(config.workDir, task.contextId);
+    assert.equal(reply.cwd, dir);
+    assert.equal(reply.contextId, task.contextId);
+    assert.equal(existsSync(join(dir, "prepared")), true);
+    const [call] = hookCalls(log);
+    assert.deepEqual({ action: call!.action, dir: call!.dir, contextId: call!.contextId, caller: call!.caller }, {
+      action: "prepare",
+      dir,
+      contextId: task.contextId,
+      caller: OWNER,
+    });
+  });
+
+  it("gives the hook the same environment as pi, not the host's", async () => {
+    process.env.HOOK_SECRET = "secret";
+    try {
+      const { config, log } = workspaceConfig(tempDir());
+      const { url } = await start(config);
+      await waitForTask(url, "owner", (await send(url, "owner", "hello")).id);
+      const [call] = hookCalls(log);
+      assert.equal(call!.env.includes("HOOK_SECRET"), false);
+      assert.equal(call!.env.includes("PI_CODING_AGENT_DIR"), true);
+    } finally {
+      delete process.env.HOOK_SECRET;
+    }
+  });
+
+  it("prepares the workspace again each time pi starts for the context", async () => {
+    const { config, log } = workspaceConfig(tempDir(), { idleTimeoutSeconds: 0.2 });
+    const { url } = await start(config);
+    const first = await send(url, "owner", "one");
+    await waitForTask(url, "owner", first.id);
+    const second = await send(url, "owner", "two", { contextId: first.contextId });
+    await waitForTask(url, "owner", second.id);
+    assert.equal(hookCalls(log).length, 1, "a running process keeps its workspace");
+    await sleep(600);
+    const third = await send(url, "owner", "three", { contextId: first.contextId });
+    assert.match(resultText(await waitForTask(url, "owner", third.id)), /turn=3/);
+    assert.deepEqual(
+      hookCalls(log).map((call) => call.action),
+      ["prepare", "prepare"],
+    );
+  });
+
+  it("fails the task without starting pi when the workspace cannot be prepared", async () => {
+    const dir = tempDir();
+    const log = join(dir, "hooks.log");
+    const config = makeConfig(dir, { contextWorkspace: { prepare: [process.execPath, FAKE_HOOK, log, "prepare", "fail"] } });
+    const { url } = await start(config);
+    const task = await send(url, "owner", "hello");
+    const done = await waitForTask(url, "owner", task.id);
+    assert.equal(done.status.state, "TASK_STATE_FAILED");
+    assert.match(statusText(done), /workspace/);
+    assert.match(statusText(done), /the clone is not reachable/);
+    assert.equal(existsSync(join(config.workDir, task.contextId, "spawns.log")), false, "pi was not started");
+  });
+
+  it("removes the workspace of a context past the retention period", async () => {
+    let clock = Date.parse("2026-09-22T00:00:00Z");
+    const { config, log } = workspaceConfig(tempDir(), { sessionRetentionSeconds: 3600 });
+    const { url, host } = await start(config, () => clock);
+    const task = await send(url, "owner", "one");
+    await waitForTask(url, "owner", task.id);
+    const dir = join(config.workDir, task.contextId);
+    assert.equal(existsSync(dir), true);
+    clock += 3601_000;
+    await host.sweep();
+    assert.equal(existsSync(dir), false);
+    assert.deepEqual(
+      hookCalls(log).map((call) => [call.action, call.dir, call.contextId]),
+      [
+        ["prepare", dir, task.contextId],
+        ["remove", dir, task.contextId],
+      ],
+    );
+  });
+
+  it("removes workspaces left behind by contexts it no longer knows", async () => {
+    const { config, log } = workspaceConfig(tempDir());
+    const stray = join(config.workDir, "0b8f3c52-6c37-4a47-9a31-2f3f8f0e1d11");
+    mkdirSync(stray, { recursive: true });
+    const unrelated = join(config.workDir, "not-a-context");
+    mkdirSync(unrelated, { recursive: true });
+    writeFileSync(join(config.workDir, "notes.txt"), "keep\n");
+    const { url, host } = await start(config);
+    const live = await send(url, "owner", "one");
+    await waitForTask(url, "owner", live.id);
+    await host.sweep();
+    assert.equal(existsSync(stray), false);
+    assert.equal(existsSync(join(config.workDir, live.contextId)), true, "a live context keeps its workspace");
+    assert.equal(existsSync(unrelated), true, "only directories named like contexts are touched");
+    assert.equal(existsSync(join(config.workDir, "notes.txt")), true);
+    assert.deepEqual(
+      hookCalls(log).filter((call) => call.action === "remove").map((call) => call.dir),
+      [stray],
+    );
   });
 });

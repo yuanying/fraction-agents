@@ -190,6 +190,11 @@ export class ContextRegistry {
     return row ? fromRow(row) : undefined;
   }
 
+  /** Whether the context exists, whoever owns it. */
+  has(contextId: string): boolean {
+    return this.#db.prepare("SELECT 1 FROM contexts WHERE context_id = ?").get(contextId) !== undefined;
+  }
+
   touch(contextId: string, now: number): void {
     this.#db.prepare("UPDATE contexts SET last_used_at = ? WHERE context_id = ?").run(now, contextId);
   }

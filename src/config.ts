@@ -9,6 +9,17 @@ export interface SkillConfig {
   examples: string[];
 }
 
+/**
+ * Commands that give each context a working directory of its own (for example a git worktree). The context's
+ * directory is appended as the last argument; the commands run with the same environment as pi.
+ */
+export interface ContextWorkspaceConfig {
+  /** Run before pi starts for a context. Must leave the directory in place, ready for pi to run in. */
+  prepare: string[];
+  /** Run when the context is deleted, before the host deletes what is left of the directory. May be empty. */
+  remove: string[];
+}
+
 /** The one configuration file of a generic host. It holds no secrets. */
 export interface Config {
   /** Name, description, version and skills shown in the Agent Card. */
@@ -38,6 +49,11 @@ export interface Config {
    * the values come from the host's environment.
    */
   passEnv: string[];
+  /**
+   * When set, each context runs pi in `<workDir>/<contextId>`, prepared and removed by these commands. When not,
+   * every context runs pi in `workDir` itself.
+   */
+  contextWorkspace?: ContextWorkspaceConfig;
 }
 
 const SERVICE_ACCOUNT = /^system:serviceaccount:[^:]+:[^:]+$/;
@@ -66,6 +82,7 @@ export function parseConfig(input: unknown): Config {
       input.sessionRetentionSeconds === undefined ? 604800 : duration(input, "sessionRetentionSeconds"),
     piCommand: input.piCommand === undefined ? ["pi"] : command(input.piCommand),
     passEnv: input.passEnv === undefined ? [] : envNames(input.passEnv),
+    ...(input.contextWorkspace === undefined ? {} : { contextWorkspace: contextWorkspace(input.contextWorkspace) }),
   };
 }
 
@@ -129,10 +146,18 @@ function envNames(value: unknown): string[] {
   return list;
 }
 
-function command(value: unknown): string[] {
-  const list = stringList(value, "piCommand");
-  if (list.length === 0) throw new Error("config: piCommand must not be empty");
+function command(value: unknown, field = "piCommand"): string[] {
+  const list = stringList(value, field);
+  if (list.length === 0) throw new Error(`config: ${field} must not be empty`);
   return list;
+}
+
+function contextWorkspace(value: unknown): ContextWorkspaceConfig {
+  if (!isRecord(value)) throw new Error("config: contextWorkspace must be an object");
+  return {
+    prepare: command(value.prepare, "contextWorkspace.prepare"),
+    remove: value.remove === undefined ? [] : stringList(value.remove, "contextWorkspace.remove"),
+  };
 }
 
 function skills(value: unknown): SkillConfig[] {

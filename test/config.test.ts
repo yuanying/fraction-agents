@@ -27,6 +27,25 @@ describe("config", () => {
     assert.equal(config.version, "0.0.0");
     assert.deepEqual(config.skills, []);
     assert.deepEqual(config.passEnv, []);
+    assert.equal(config.contextWorkspace, undefined);
+  });
+
+  it("takes the commands that prepare and remove a context's workspace", () => {
+    const config = parseConfig({
+      ...minimal,
+      contextWorkspace: { prepare: ["node", "worktree.ts", "prepare"], remove: ["node", "worktree.ts", "remove"] },
+    });
+    assert.deepEqual(config.contextWorkspace, {
+      prepare: ["node", "worktree.ts", "prepare"],
+      remove: ["node", "worktree.ts", "remove"],
+    });
+    assert.deepEqual(parseConfig({ ...minimal, contextWorkspace: { prepare: ["mkdir", "-p"] } }).contextWorkspace, {
+      prepare: ["mkdir", "-p"],
+      remove: [],
+    });
+    assert.throws(() => parseConfig({ ...minimal, contextWorkspace: {} }), /contextWorkspace\.prepare/);
+    assert.throws(() => parseConfig({ ...minimal, contextWorkspace: { prepare: [] } }), /contextWorkspace\.prepare/);
+    assert.throws(() => parseConfig({ ...minimal, contextWorkspace: ["mkdir"] }), /contextWorkspace/);
   });
 
   it("takes extra environment variable names to pass to pi", () => {

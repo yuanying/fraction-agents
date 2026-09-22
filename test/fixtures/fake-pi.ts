@@ -53,6 +53,10 @@ function prompt(message: string): void {
     settle(assistant(JSON.stringify(Object.keys(process.env).sort())));
     return;
   }
+  if (message === "cwd") {
+    settle(assistant(JSON.stringify({ cwd: process.cwd(), contextId: process.env.FRACTION_AGENTS_CONTEXT_ID })));
+    return;
+  }
   const wait = /^wait:(\d+)$/.exec(message);
   if (wait) {
     finishPending = () => settle(assistant("", "aborted"));
