@@ -3,6 +3,24 @@ import { PiRpcProcess, type PromptOutcome } from "./pi-rpc.ts";
 /** The environment variable that tells pi (and the extensions in it) who called. */
 export const CALLER_ENV = "FRACTION_AGENTS_CALLER";
 
+/**
+ * What pi gets from the host's environment by default: enough to run, find commands and read the locale and time
+ * zone. Nothing else is passed, so credentials in the host's environment do not reach the agent.
+ */
+export const PI_BASE_ENV = [
+  "PATH",
+  "HOME",
+  "USER",
+  "SHELL",
+  "TMPDIR",
+  "TZ",
+  "LANG",
+  "LANGUAGE",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LC_MESSAGES",
+] as const;
+
 export interface SessionTarget {
   contextId: string;
   /** Absolute path of the context's session file. */
@@ -15,6 +33,8 @@ export interface PiSessionsOptions {
   agentDir: string;
   workDir: string;
   idleTimeoutMs: number;
+  /** Further environment variable names to pass from the host, on top of {@link PI_BASE_ENV}. */
+  passEnv: readonly string[];
 }
 
 interface Entry {
@@ -89,12 +109,23 @@ export class PiSessions {
     await Promise.all([...this.#entries.keys()].map((contextId) => this.stop(contextId)));
   }
 
+  #environment(caller: string): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = {};
+    for (const name of [...PI_BASE_ENV, ...this.#options.passEnv]) {
+      const value = process.env[name];
+      if (value !== undefined) env[name] = value;
+    }
+    env.PI_CODING_AGENT_DIR = this.#options.agentDir;
+    env[CALLER_ENV] = caller;
+    return env;
+  }
+
   #start(target: SessionTarget): PiRpcProcess {
     const process_ = new PiRpcProcess({
       command: this.#options.piCommand,
       sessionPath: target.sessionPath,
       cwd: this.#options.workDir,
-      env: { ...process.env, PI_CODING_AGENT_DIR: this.#options.agentDir, [CALLER_ENV]: target.caller },
+      env: this.#environment(target.caller),
       logPrefix: `[pi ${target.contextId.slice(0, 8)}]`,
     });
     void process_.exited.then((reason) => {

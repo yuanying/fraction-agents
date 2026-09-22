@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { A2A_AUDIENCE, type TokenReviewer } from "../src/auth.ts";
 import { parseConfig, type Config } from "../src/config.ts";
 import { createHost, type Host } from "../src/host.ts";
+import { PI_BASE_ENV } from "../src/sessions.ts";
 
 const OWNER = "system:serviceaccount:fraction-agents:owner";
 const CLAUDE = "system:serviceaccount:fraction-agents:claude";
@@ -266,6 +267,30 @@ describe("tasks and contexts", () => {
     const started = spawns(config);
     assert.equal(started.length, 2);
     assert.equal(started[0], started[1]);
+  });
+
+  it("passes pi only the minimal environment, the agent's variables and the configured names", async () => {
+    const planted = { HF_TOKEN: "hf-secret", OPENAI_API_KEY: "sk-secret", EXTRA_ALLOWED: "yes", EXTRA_DENIED: "no" };
+    Object.assign(process.env, planted);
+    try {
+      const { url } = await start(makeConfig(tempDir(), { passEnv: ["EXTRA_ALLOWED"] }));
+      const task = await send(url, "owner", "env");
+      const names: string[] = JSON.parse(resultText(await waitForTask(url, "owner", task.id)));
+      for (const name of ["HF_TOKEN", "OPENAI_API_KEY", "EXTRA_DENIED"]) {
+        assert.equal(names.includes(name), false, `${name} must not reach pi`);
+      }
+      for (const name of ["EXTRA_ALLOWED", "PI_CODING_AGENT_DIR", "FRACTION_AGENTS_CALLER", "PATH", "HOME"]) {
+        assert.equal(names.includes(name), true, `${name} reaches pi`);
+      }
+      const allowed = new Set(["EXTRA_ALLOWED", "PI_CODING_AGENT_DIR", "FRACTION_AGENTS_CALLER", ...PI_BASE_ENV]);
+      assert.deepEqual(
+        names.filter((name) => !allowed.has(name)),
+        [],
+        "nothing else reaches pi",
+      );
+    } finally {
+      for (const name of Object.keys(planted)) delete process.env[name];
+    }
   });
 
   it("rejects a second task while the context is busy", async () => {

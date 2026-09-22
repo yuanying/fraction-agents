@@ -26,6 +26,16 @@ describe("config", () => {
     assert.equal(config.workDir, "/data/work");
     assert.equal(config.version, "0.0.0");
     assert.deepEqual(config.skills, []);
+    assert.deepEqual(config.passEnv, []);
+  });
+
+  it("takes extra environment variable names to pass to pi", () => {
+    assert.deepEqual(parseConfig({ ...minimal, passEnv: ["GIT_AUTHOR_NAME", "http_proxy"] }).passEnv, [
+      "GIT_AUTHOR_NAME",
+      "http_proxy",
+    ]);
+    assert.throws(() => parseConfig({ ...minimal, passEnv: ["NOT=A NAME"] }), /passEnv/);
+    assert.throws(() => parseConfig({ ...minimal, passEnv: "HOME" }), /passEnv/);
   });
 
   it("keeps the values it is given", () => {

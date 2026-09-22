@@ -49,6 +49,10 @@ function prompt(message: string): void {
         `echo:${message}|turn=${turns()}|caller=${process.env.FRACTION_AGENTS_CALLER}|agentDir=${process.env.PI_CODING_AGENT_DIR}`,
       ),
     );
+  if (message === "env") {
+    settle(assistant(JSON.stringify(Object.keys(process.env).sort())));
+    return;
+  }
   const wait = /^wait:(\d+)$/.exec(message);
   if (wait) {
     finishPending = () => settle(assistant("", "aborted"));

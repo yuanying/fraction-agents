@@ -63,6 +63,7 @@ export function createHost(options: HostOptions): Host {
     agentDir: config.agentDir,
     workDir: config.workDir,
     idleTimeoutMs: config.idleTimeoutSeconds * 1000,
+    passEnv: config.passEnv,
   });
   const executor = new PiAgentExecutor({ contexts: store.contexts, sessions, sessionsDir, now });
   const requestHandler = new ContextGuardHandler(

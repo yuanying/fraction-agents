@@ -33,9 +33,15 @@ export interface Config {
   sessionRetentionSeconds: number;
   /** The command that starts pi. `--mode rpc --session <file>` is appended. */
   piCommand: string[];
+  /**
+   * Names of further environment variables to pass from the host to pi, on top of the minimal set. Only names:
+   * the values come from the host's environment.
+   */
+  passEnv: string[];
 }
 
 const SERVICE_ACCOUNT = /^system:serviceaccount:[^:]+:[^:]+$/;
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function loadConfig(path: string): Config {
   return parseConfig(JSON.parse(readFileSync(path, "utf8")));
@@ -59,6 +65,7 @@ export function parseConfig(input: unknown): Config {
     sessionRetentionSeconds:
       input.sessionRetentionSeconds === undefined ? 604800 : duration(input, "sessionRetentionSeconds"),
     piCommand: input.piCommand === undefined ? ["pi"] : command(input.piCommand),
+    passEnv: input.passEnv === undefined ? [] : envNames(input.passEnv),
   };
 }
 
@@ -112,6 +119,13 @@ function callers(value: unknown): string[] {
   if (bad !== undefined) {
     throw new Error(`config: allowedCallers must be system:serviceaccount:<namespace>:<name>, got ${JSON.stringify(bad)}`);
   }
+  return list;
+}
+
+function envNames(value: unknown): string[] {
+  const list = stringList(value, "passEnv");
+  const bad = list.find((name) => !ENV_NAME.test(name));
+  if (bad !== undefined) throw new Error(`config: passEnv must hold environment variable names, got ${JSON.stringify(bad)}`);
   return list;
 }
 

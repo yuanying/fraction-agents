@@ -61,6 +61,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 | `idleTimeoutSeconds` | | `1800`（30 分） | 使われなくなった pi のプロセスを止めるまでの秒数 |
 | `sessionRetentionSeconds` | | `604800`（7 日） | 使われなくなった context を消すまでの秒数 |
 | `piCommand` | | `["pi"]` | pi を起動するコマンド。後ろに `--mode rpc --session <file>` を足して起動する |
+| `passEnv` | | `[]` | 既定の最小限に加えて pi に渡す環境変数の名前。名前だけを書き、値はホストの環境から取る |
 
 例:
 
@@ -91,15 +92,24 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 TokenReview には Pod の ServiceAccount の token（`/var/run/secrets/kubernetes.io/serviceaccount/token`）と CA を使う。
 この ServiceAccount には `system:auth-delegator` を ClusterRoleBinding で与える。
 
-ホストが pi に渡すもの（ホスト自身の環境変数に加えて渡す）:
+ホストは、pi に自分の環境変数をそのまま渡さない。pi の子プロセスが受け取るのは次の 3 種類だけである。
+
+1. ホストの環境にある次の変数（pi が動き、コマンドを探し、ロケールとタイムゾーンを知るのに要る最小限）:
+   `PATH`、`HOME`、`USER`、`SHELL`、`TMPDIR`、`TZ`、`LANG`、`LANGUAGE`、`LC_ALL`、`LC_CTYPE`、`LC_MESSAGES`
+2. 設定の `passEnv` に名前を書いた変数。値はホストの環境から取る。
+3. ホストが決めて渡す次の変数:
 
 | 変数 | 意味 |
 |---|---|
 | `PI_CODING_AGENT_DIR` | 設定の `agentDir` |
 | `FRACTION_AGENTS_CALLER` | その context の呼び出し元の名前（`system:serviceaccount:<namespace>:<name>`）。Pi の拡張は、これを見て呼び出し元ごとに振る舞いを変えられる |
 
-ホストの環境変数はそのまま pi に引き継がれる。pi が使うモデルの資格を環境変数で与えると、pi はそれを使う。
-エージェントに渡さない資格は、ホストの環境にも置かない。
+ホストの環境に資格（`OPENAI_API_KEY`、`HF_TOKEN` など）があっても、`passEnv` に書かない限り pi には渡らない。
+エージェントに資格を渡すときは、その名前を `passEnv` に書く。
+モデルの資格は、環境変数ではなく agentDir の auth.json で持たせるのが基本である（ADR 0008）。
+
+Pod の ServiceAccount の token（`/var/run/secrets/kubernetes.io/serviceaccount/`）は、pi の bash からも読める。
+エージェントの ServiceAccount には TokenReview に要る権限（`system:auth-delegator`）だけを与え、ほかの権限を持たせない。
 
 ### 起動
 
