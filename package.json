@@ -1,0 +1,24 @@
+{
+  "name": "fraction-agents",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.12.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/src/host/main.js"
+  },
+  "dependencies": {
+    "@a2a-js/sdk": "1.2.0",
+    "express": "5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}
