@@ -14,6 +14,11 @@ LLM Wiki を読み、変更を PR で出すエージェントの定義（ADR 000
 agentDir には、このほかにログインで作られる `auth.json` が置かれる（ADR 0008）。
 `auth.json` は Pod の中でログインして作るので、ここには置かない。
 agentDir は書き込める PVC にし、`AGENTS.md`・`settings.json`・`github-gate.json` はファイルごとに ConfigMap から差し込む。
+pi は agentDir に設定のロックのファイル（`settings.json.lock`）も作るので、agentDir は書き込めなければならない。
+
+`kustomization.yaml` は、`AGENTS.md`・`settings.json` を ConfigMap `wiki-keeper-agent-dir` に、
+2 つの例を ConfigMap `wiki-keeper-config` にする。`deploy/agents/wiki-keeper` がこれを読む（README の「Kubernetes に置く」）。
+kustomize は kustomization のディレクトリの下のファイルしか読めないので、ConfigMap はここで作る。
 
 ## 環境ごとの値
 

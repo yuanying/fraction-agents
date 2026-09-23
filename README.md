@@ -366,3 +366,116 @@ agentDir に置く。秘密は置かない。例は `agents/wiki-keeper/github-g
 
 `agents/wiki-keeper/` に、Wiki 管理人の agentDir の中身の雛形と、汎用ホストの設定の例を置く。
 リポジトリの URL や App の ID など環境ごとの値は、private の overlay で渡す（ADR 0010）。詳しくは `agents/wiki-keeper/README.md`。
+
+## Kubernetes に置く
+
+manifest は kustomize で組む。このリポジトリには、どの環境でも使える base と、エージェントごとの kustomization を置く。
+ホスト名、動かすエージェントの組、エージェントごとの設定は、環境ごとの overlay に置く（ADR 0010）。
+
+### 構成
+
+| ディレクトリ | 中身 |
+|---|---|
+| `deploy/base` | 汎用ホストで 1 エージェントを動かす雛形。Deployment・Service・ServiceAccount・PVC と、`system:auth-delegator` の ClusterRoleBinding。名前は仮の `agent` で、単体では動かさない |
+| `deploy/agents/<エージェント>` | base の名前をエージェントの名前に付け替え、そのエージェントの設定とファイルを載せる。overlay はここを参照する |
+| `agents/<エージェント>` | agentDir の中身（`AGENTS.md`・`settings.json`）と設定の例。`kustomization.yaml` がこれらを ConfigMap にする |
+
+Wiki 管理人（`deploy/agents/wiki-keeper`）が出すもの:
+
+| 種類 | 名前 | 中身 |
+|---|---|---|
+| Deployment・Service・ServiceAccount | `wiki-keeper` | replicas 1、strategy Recreate。Service は port 80 をコンテナの `http`（8080）へ |
+| PVC | `wiki-keeper-data` | ReadWriteOnce・1Gi。StorageClass は書かない |
+| ConfigMap | `wiki-keeper-agent-dir` | `AGENTS.md`・`settings.json`。その版の `agents/wiki-keeper/` のもの |
+| ConfigMap | `wiki-keeper-config` | `config.json`（汎用ホストの設定）・`github-gate.json`（GitHub の門番の設定）。値は架空の例 |
+| Secret（参照だけ） | `wiki-keeper-github-app` | GitHub App の鍵。manifest には入れず、手で作る |
+| ClusterRoleBinding | `wiki-keeper-auth-delegator` | TokenReview のため（ADR 0003） |
+
+Pod の中のパス:
+
+| パス | 中身 |
+|---|---|
+| `/agent` | pi の agentDir。PVC の `agent/` で、書き込める。ログインで作る `auth.json` がここに残る |
+| `/agent/AGENTS.md`・`/agent/settings.json` | ConfigMap `wiki-keeper-agent-dir` のファイル。読み取り専用 |
+| `/agent/github-gate.json` | ConfigMap `wiki-keeper-config` のファイル。読み取り専用 |
+| `/data` | ホストのデータ。PVC の `data/`。Task の記録、セッション、Wiki の clone（`/data/wiki.git`） |
+| `/etc/fraction-agents/config.json` | ConfigMap `wiki-keeper-config` のファイル。読み取り専用 |
+| `/var/run/secrets/github-app/private-key.pem` | Secret `wiki-keeper-github-app`。Secret が無くても Pod は起動する |
+
+- コンテナは image の `node` ユーザー（UID 1000）で動く。PVC は `fsGroup` で書けるようにする。
+  PVC の `agent/` と `data/` は、init container が `node` ユーザーで作る。
+- agentDir のファイルは ConfigMap からファイルごと（subPath）に差し込む。ディレクトリごと差し込むと、agentDir が読み取り専用になり、
+  `auth.json` を書けない。subPath の差し込みは ConfigMap の変更を追わないが、ConfigMap の名前に中身の hash が付くので、
+  変更を適用すると Pod が作り直される。
+- probe は `/healthz` を見る。
+
+### overlay で決めるもの
+
+overlay は、エージェントの kustomization を remote base で参照し、`?ref=v<版>` で版を固定する。
+image の tag も同じ版にする。例（値は架空）:
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fraction-agents
+resources:
+  - github.com/yuanying/fraction-agents//deploy/agents/wiki-keeper?ref=v0.1.0
+  - ingress.yaml
+images:
+  - name: ghcr.io/yuanying/fraction-agents
+    newTag: 0.1.0
+configMapGenerator:
+  - name: wiki-keeper-config
+    behavior: replace
+    files:
+      - config.json
+      - github-gate.json
+patches:
+  - target: {kind: PersistentVolumeClaim, name: wiki-keeper-data}
+    patch: |-
+      - op: add
+        path: /spec/storageClassName
+        value: standard
+```
+
+- 名前空間（`fraction-agents`）。base とエージェントの kustomization は名前空間を書かない。
+- image の tag。base は tag を書かないので、overlay が必ず指定する。
+- PVC の StorageClass と、backup に含めるか。
+- `wiki-keeper-config` の中身。`config.json` の `publicUrl` と `allowedCallers`、`github-gate.json` の全体。
+- Ingress。Service の port 80 に向ける。
+- 呼び出し元の ServiceAccount（`owner`・`claude`・`natsumi` など）。
+
+### Secret を作る
+
+GitHub App の鍵は Git にも kustomize にも入れず、手で Secret にする。
+
+```bash
+kubectl create secret generic wiki-keeper-github-app -n fraction-agents \
+  --from-file=private-key.pem=/path/to/app.private-key.pem
+```
+
+- 鍵のキーは `private-key.pem` にする。`github-gate.json` の `app.privateKeyFile` は `/var/run/secrets/github-app/private-key.pem` を指す。
+- Secret が無くても Pod は起動する。その間、push と PR の作成は失敗する。
+- Secret を作った後、または鍵を差し替えた後は Pod を作り直す（`kubectl rollout restart deployment/wiki-keeper -n fraction-agents`）。
+
+### ChatGPT Plus にログインする
+
+ログインは、エージェントの Pod の中で pi を対話で起動し、device code の方式で行う（ADR 0008）。
+
+```bash
+kubectl exec -it -n fraction-agents deployment/wiki-keeper -- env PI_CODING_AGENT_DIR=/agent pi -ne
+```
+
+`-ne` で拡張を読まずに起動する。ログインに拡張は要らない。拡張の設定（`github-gate.json`）がまだ整っていなくても、ログインはできる。
+
+1. pi の中で `/login` を開き、ChatGPT Plus（`openai-codex`）を選ぶ。
+2. 方式は device code（headless）を選ぶ。表示された URL を手元のブラウザで開き、コードを入れる。
+3. ログインが済むと、`/agent/auth.json` ができる。pi を終える。
+
+- `auth.json` は PVC にあるので、Pod を作り直しても残る。ログインが切れたら同じ手順でやり直す。
+- 対話の pi は、呼び出し元の依頼で動く pi と同じ agentDir を使う。ログインのほかの作業はしない。
+
+### image
+
+tag `v<版>` を push すると、GitHub Actions が `ghcr.io/yuanying/fraction-agents:<版>`（`v` を除いた版）を build して push する。
+PR では build だけを確かめる。初めて push した package は private で作られるので、GitHub の画面で public にする。
