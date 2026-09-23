@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+spec:
+  template:
+    spec:
+      containers:
+        - name: host
+          volumeMounts:
+            - name: config
+              mountPath: /agent/github-gate.json
+              subPath: github-gate.json
+              readOnly: true
+            # The GitHub App's key (app.privateKeyFile in github-gate.json). Made by hand, never in git.
+            - name: github-app
+              mountPath: /var/run/secrets/github-app
+              readOnly: true
+      volumes:
+        - name: agent-dir
+          configMap:
+            name: wiki-keeper-agent-dir
+        - name: config
+          configMap:
+            name: wiki-keeper-config
+        - name: github-app
+          secret:
+            secretName: wiki-keeper-github-app
+            defaultMode: 0440
+            # The pod starts before the App exists; pushing and pull requests fail until the Secret is made.
+            optional: true

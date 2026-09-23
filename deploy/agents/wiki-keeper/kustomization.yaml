@@ -1,0 +1,38 @@
+# The Wiki keeper (ADR 0009) on the generic host. The environment's overlay refers to this directory as a remote base,
+# pinned to a version, and sets the namespace, the image's tag, the StorageClass and the ConfigMap wiki-keeper-config.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - ../../../agents/wiki-keeper
+labels:
+  - pairs:
+      app.kubernetes.io/instance: wiki-keeper
+    includeSelectors: true
+patches:
+  - target: {kind: Deployment, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: wiki-keeper
+  - target: {kind: Service, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: wiki-keeper
+  - target: {kind: ServiceAccount, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: wiki-keeper
+  - target: {kind: ClusterRoleBinding, name: agent-auth-delegator}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: wiki-keeper-auth-delegator
+  - target: {kind: PersistentVolumeClaim, name: agent-data}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: wiki-keeper-data
+  - path: deployment.yaml
