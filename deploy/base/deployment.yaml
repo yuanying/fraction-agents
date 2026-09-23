@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+spec:
+  replicas: 1
+  # One pod at a time: the volume is ReadWriteOnce, and the host keeps its state in SQLite on it.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fraction-agents
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fraction-agents
+    spec:
+      serviceAccountName: agent
+      securityContext:
+        # The image's node user. fsGroup makes the volume writable for it.
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # The agent directory and the data directory are subpaths of one volume. Create them as the node user,
+        # before the kubelet would create them as root for the subPath mounts.
+        - name: prepare-volume
+          image: ghcr.io/yuanying/fraction-agents
+          command: ["sh", "-c", "mkdir -p /volume/agent /volume/data && chmod 700 /volume/agent /volume/data"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /volume
+      containers:
+        - name: host
+          image: ghcr.io/yuanying/fraction-agents
+          args: ["--config", "/etc/fraction-agents/config.json"]
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # The agent directory stays writable: the login writes auth.json there (ADR 0008).
+            # The agent's own files come from a ConfigMap, one file at a time.
+            - name: data
+              mountPath: /agent
+              subPath: agent
+            - name: agent-dir
+              mountPath: /agent/AGENTS.md
+              subPath: AGENTS.md
+              readOnly: true
+            - name: agent-dir
+              mountPath: /agent/settings.json
+              subPath: settings.json
+              readOnly: true
+            - name: data
+              mountPath: /data
+              subPath: data
+            - name: config
+              mountPath: /etc/fraction-agents/config.json
+              subPath: config.json
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: agent-data
+        - name: agent-dir
+          configMap:
+            name: agent-dir
+        - name: config
+          configMap:
+            name: agent-config

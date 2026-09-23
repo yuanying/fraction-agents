@@ -1,0 +1,12 @@
+# One agent on the generic host (ADR 0002, 0007, 0010). Not deployable alone: an agent's kustomization renames the
+# resources after the agent, and provides the ConfigMaps agent-config (config.json) and agent-dir (the files of the
+# agent directory). See deploy/agents/wiki-keeper. The namespace, the image's tag and the StorageClass are the
+# environment's overlay's.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - serviceaccount.yaml
+  - clusterrolebinding.yaml
+  - persistentvolumeclaim.yaml
+  - deployment.yaml
+  - service.yaml
