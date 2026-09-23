@@ -345,6 +345,10 @@ agentDir に置く。秘密は置かない。例は `agents/wiki-keeper/github-g
 
 パスは、名前が `/` で終わっていてもいなくても、そのパス自身とその下のすべてを指す。
 
+`github-gate.json` はあるが読めない（JSON でない、値が正しくない）とき、拡張は警告を出すだけで、GitHub のツールもフックも出さない。
+pi は起動するので、`ask_caller` とログインは使える。エージェントに GitHub のツールが無いときは、この設定を疑う。
+警告は pi の標準エラーに出て、汎用ホストのログ（`kubectl logs`）に `[pi <contextId の先頭 8 文字>]` を付けて残る。
+
 ### context ごとの worktree
 
 `pi-package/bin/workspace.ts` は、汎用ホストの `contextWorkspace` から呼ぶコマンドである。
@@ -466,7 +470,7 @@ kubectl create secret generic wiki-keeper-github-app -n fraction-agents \
 kubectl exec -it -n fraction-agents deployment/wiki-keeper -- env PI_CODING_AGENT_DIR=/agent pi -ne
 ```
 
-`-ne` で拡張を読まずに起動する。ログインに拡張は要らない。拡張の設定（`github-gate.json`）がまだ整っていなくても、ログインはできる。
+`-ne` で拡張を読まずに起動する。ログインに拡張は要らないので、拡張の設定や読み込みの具合に左右されずにログインできる。
 
 1. pi の中で `/login` を開き、ChatGPT Plus（`openai-codex`）を選ぶ。
 2. 方式は device code（headless）を選ぶ。表示された URL を手元のブラウザで開き、コードを入れる。

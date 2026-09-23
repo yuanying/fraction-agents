@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 
@@ -76,6 +77,24 @@ describe("GitHub gate extension", () => {
     createGitHubGate({ env: { PI_CODING_AGENT_DIR: "/nonexistent" } })(pi);
     assert.equal(pi.tools.size, 0);
     assert.equal(pi.handlers.size, 0);
+  });
+
+  it("warns and registers nothing when the gate settings cannot be read", () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "gate-"));
+    const settings = JSON.parse(readFileSync(new URL("../../agents/wiki-keeper/github-gate.example.json", import.meta.url), "utf8"));
+    settings.app.appId = "SET-AFTER-CREATING-THE-GITHUB-APP";
+    writeFileSync(join(agentDir, "github-gate.json"), JSON.stringify(settings));
+    const warnings: string[] = [];
+    const pi = new FakePi();
+    assert.doesNotThrow(() =>
+      createGitHubGate({ env: { PI_CODING_AGENT_DIR: agentDir, FRACTION_AGENTS_CALLER: OWNER }, warn: (message) => warnings.push(message) })(pi),
+    );
+    assert.equal(pi.tools.size, 0);
+    assert.equal(pi.handlers.size, 0);
+    assert.equal(warnings.length, 1);
+    const [warning = ""] = warnings;
+    assert.match(warning, /github-gate\.json/);
+    assert.match(warning, /app\.appId must be a numeric ID/);
   });
 
   it("opens a pull request and merges it through the tools", async () => {

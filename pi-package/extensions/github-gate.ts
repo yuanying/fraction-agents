@@ -16,6 +16,7 @@ export interface GitHubGateOptions {
   env?: NodeJS.ProcessEnv;
   loadConfig?: (path: string) => GateConfig;
   github?: (config: GateConfig) => GitHubClient;
+  warn?: (message: string) => void;
 }
 
 export function createGitHubGate(options: GitHubGateOptions = {}): (pi: PiApi) => void {
@@ -23,7 +24,16 @@ export function createGitHubGate(options: GitHubGateOptions = {}): (pi: PiApi) =
     const env = options.env ?? process.env;
     const path = defaultGateConfigPath(env);
     if (!path || (!options.loadConfig && !existsSync(path))) return;
-    const config = (options.loadConfig ?? loadGateConfig)(path);
+    let config: GateConfig;
+    try {
+      config = (options.loadConfig ?? loadGateConfig)(path);
+    } catch (error) {
+      // Bad settings leave the agent without GitHub tools, not without pi: throwing here would stop pi from
+      // starting at all, ask_caller and the login included. Without the gate's tools nothing can write to GitHub.
+      const message = error instanceof Error ? error.message : String(error);
+      (options.warn ?? console.error)(`github-gate: ${path} is not usable, so the GitHub tools are off: ${message}`);
+      return;
+    }
     // One client per pi process: it keeps the installation token in memory until it runs out.
     const github = (options.github ?? ((c: GateConfig) => new GitHubApp(c)))(config);
     const caller = env.FRACTION_AGENTS_CALLER ?? "";
