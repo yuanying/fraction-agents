@@ -1,7 +1,7 @@
 # 0010. manifest は汎用の base をこのリポジトリに、環境固有の overlay を private のリポジトリに置く
 
 - Date: 2026-09-22
-- Status: Accepted
+- Status: Accepted（base の Deployment と PVC は ADR 0011 で StatefulSet と volumeClaimTemplates に置き換えた）
 
 ## Context
 

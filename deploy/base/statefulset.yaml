@@ -1,12 +1,14 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: agent
 spec:
-  replicas: 1
   # One pod at a time: the volume is ReadWriteOnce, and the host keeps its state in SQLite on it.
-  strategy:
-    type: Recreate
+  # With one replica, an update deletes the old pod before it creates the new one.
+  replicas: 1
+  # The Service in front of the agent. Not headless: nothing calls the pod by its own DNS name, and one Service
+  # is enough for the callers and the Ingress.
+  serviceName: agent
   selector:
     matchLabels:
       app.kubernetes.io/name: fraction-agents
@@ -81,12 +83,20 @@ spec:
               subPath: config.json
               readOnly: true
       volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: agent-data
         - name: agent-dir
           configMap:
             name: agent-dir
         - name: config
           configMap:
             name: agent-config
+  # Holds the agent directory (auth.json from the login) and the host's data. The claim is data-<name>-0.
+  # No storageClassName: the environment's overlay picks it. The templates cannot be changed once the StatefulSet exists.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
