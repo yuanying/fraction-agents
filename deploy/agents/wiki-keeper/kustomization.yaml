@@ -10,7 +10,7 @@ labels:
       app.kubernetes.io/instance: wiki-keeper
     includeSelectors: true
 patches:
-  - target: {kind: Deployment, name: agent}
+  - target: {kind: StatefulSet, name: agent}
     patch: |-
       - op: replace
         path: /metadata/name
@@ -30,9 +30,4 @@ patches:
       - op: replace
         path: /metadata/name
         value: wiki-keeper-auth-delegator
-  - target: {kind: PersistentVolumeClaim, name: agent-data}
-    patch: |-
-      - op: replace
-        path: /metadata/name
-        value: wiki-keeper-data
-  - path: deployment.yaml
+  - path: statefulset.yaml
