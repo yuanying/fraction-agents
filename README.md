@@ -17,6 +17,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0008. エージェントの定義は Pi の agentDir で持ち、ログインはエージェントごとに分ける](docs/adr/0008-agent-definition-as-pi-agent-dir.md)
 - [0009. Wiki 管理人の置き方と、GitHub への書き込みの門番](docs/adr/0009-wiki-keeper-placement-and-gatekeeping.md)
 - [0010. manifest は汎用の base をこのリポジトリに、環境固有の overlay を private のリポジトリに置く](docs/adr/0010-manifest-base-and-private-overlay.md)
+- [0011. エージェントは StatefulSet で動かし、ボリュームは volumeClaimTemplates で作る](docs/adr/0011-agent-as-statefulset.md)
 
 ## 汎用ホスト
 
@@ -380,7 +381,7 @@ manifest は kustomize で組む。このリポジトリには、どの環境で
 
 | ディレクトリ | 中身 |
 |---|---|
-| `deploy/base` | 汎用ホストで 1 エージェントを動かす雛形。Deployment・Service・ServiceAccount・PVC と、`system:auth-delegator` の ClusterRoleBinding。名前は仮の `agent` で、単体では動かさない |
+| `deploy/base` | 汎用ホストで 1 エージェントを動かす雛形。StatefulSet（ボリュームは `volumeClaimTemplates`）・Service・ServiceAccount と、`system:auth-delegator` の ClusterRoleBinding。名前は仮の `agent` で、単体では動かさない |
 | `deploy/agents/<エージェント>` | base の名前をエージェントの名前に付け替え、そのエージェントの設定とファイルを載せる。overlay はここを参照する |
 | `agents/<エージェント>` | agentDir の中身（`AGENTS.md`・`settings.json`）と設定の例。`kustomization.yaml` がこれらを ConfigMap にする |
 
@@ -388,8 +389,8 @@ Wiki 管理人（`deploy/agents/wiki-keeper`）が出すもの:
 
 | 種類 | 名前 | 中身 |
 |---|---|---|
-| Deployment・Service・ServiceAccount | `wiki-keeper` | replicas 1、strategy Recreate。Service は port 80 をコンテナの `http`（8080）へ |
-| PVC | `wiki-keeper-data` | ReadWriteOnce・1Gi。StorageClass は書かない |
+| StatefulSet・Service・ServiceAccount | `wiki-keeper` | StatefulSet は replicas 1 で、`serviceName` はこの Service。Service は port 80 をコンテナの `http`（8080）へ |
+| PVC | `data-wiki-keeper-0` | StatefulSet の `volumeClaimTemplates`（`data`）から作られる。ReadWriteOnce・1Gi。StorageClass は書かない |
 | ConfigMap | `wiki-keeper-agent-dir` | `AGENTS.md`・`settings.json`。その版の `agents/wiki-keeper/` のもの |
 | ConfigMap | `wiki-keeper-config` | `config.json`（汎用ホストの設定）・`github-gate.json`（GitHub の門番の設定）。値は架空の例 |
 | Secret（参照だけ） | `wiki-keeper-github-app` | GitHub App の鍵。manifest には入れず、手で作る |
@@ -423,11 +424,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: fraction-agents
 resources:
-  - github.com/yuanying/fraction-agents//deploy/agents/wiki-keeper?ref=v0.1.0
+  - github.com/yuanying/fraction-agents//deploy/agents/wiki-keeper?ref=v0.1.2
   - ingress.yaml
 images:
   - name: ghcr.io/yuanying/fraction-agents
-    newTag: 0.1.0
+    newTag: 0.1.2
 configMapGenerator:
   - name: wiki-keeper-config
     behavior: replace
@@ -435,19 +436,29 @@ configMapGenerator:
       - config.json
       - github-gate.json
 patches:
-  - target: {kind: PersistentVolumeClaim, name: wiki-keeper-data}
+  - target: {kind: StatefulSet, name: wiki-keeper}
     patch: |-
       - op: add
-        path: /spec/storageClassName
+        path: /spec/volumeClaimTemplates/0/spec/storageClassName
         value: standard
 ```
 
 - 名前空間（`fraction-agents`）。base とエージェントの kustomization は名前空間を書かない。
 - image の tag。base は tag を書かないので、overlay が必ず指定する。
-- PVC の StorageClass と、backup に含めるか。
+- PVC の StorageClass と、backup に含めるか。StorageClass は、上の例のように StatefulSet の `volumeClaimTemplates` にパッチを当てて決める。
+  `volumeClaimTemplates` は StatefulSet を作った後には変えられないので、最初の apply の前に決めておく（ADR 0011）。
 - `wiki-keeper-config` の中身。`config.json` の `publicUrl` と `allowedCallers`、`github-gate.json` の全体。
 - Ingress。Service の port 80 に向ける。
 - 呼び出し元の ServiceAccount（`owner`・`claude`・`natsumi` など）。
+
+### Deployment から移る
+
+v0.1.1 までの base は、Deployment と別の PVC（`<エージェント>-data`）でエージェントを動かしていた（ADR 0011）。
+
+- overlay の PVC へのパッチを、上の例のように StatefulSet へのパッチに書き換える。
+- apply の前に、古い Deployment を消す（`kubectl delete deployment/wiki-keeper -n fraction-agents`）。残すと、同じ Service の後ろに 2 つの Pod が並ぶ。
+- 新しい PVC `data-wiki-keeper-0` は空で始まる。ChatGPT Plus のログインはやり直す。
+- 古い PVC `wiki-keeper-data` は apply では消えない。要らなくなったら手で消す。
 
 ### Secret を作る
 
@@ -460,14 +471,14 @@ kubectl create secret generic wiki-keeper-github-app -n fraction-agents \
 
 - 鍵のキーは `private-key.pem` にする。`github-gate.json` の `app.privateKeyFile` は `/var/run/secrets/github-app/private-key.pem` を指す。
 - Secret が無くても Pod は起動する。その間、push と PR の作成は失敗する。
-- Secret を作った後、または鍵を差し替えた後は Pod を作り直す（`kubectl rollout restart deployment/wiki-keeper -n fraction-agents`）。
+- Secret を作った後、または鍵を差し替えた後は Pod を作り直す（`kubectl rollout restart statefulset/wiki-keeper -n fraction-agents`）。
 
 ### ChatGPT Plus にログインする
 
 ログインは、エージェントの Pod の中で pi を対話で起動し、device code の方式で行う（ADR 0008）。
 
 ```bash
-kubectl exec -it -n fraction-agents deployment/wiki-keeper -- env PI_CODING_AGENT_DIR=/agent pi -ne
+kubectl exec -it -n fraction-agents wiki-keeper-0 -- env PI_CODING_AGENT_DIR=/agent pi -ne
 ```
 
 `-ne` で拡張を読まずに起動する。ログインに拡張は要らないので、拡張の設定や読み込みの具合に左右されずにログインできる。
