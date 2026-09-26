@@ -1,3 +1,6 @@
+import { join } from "node:path";
+
+import { ARTIFACT_OUTBOX_ENV, artifactOutbox } from "./artifacts.ts";
 import { PiRpcProcess, type DialogRequest, type PromptOutcome } from "./pi-rpc.ts";
 import type { ContextWorkspaces } from "./workspace.ts";
 
@@ -66,6 +69,8 @@ export interface SessionTarget {
 
 export interface PiEnvironmentOptions {
   agentDir: string;
+  /** The host's data directory; the context's artifact outbox is under it. */
+  dataDir: string;
   /** Further environment variable names to pass from the host, on top of {@link PI_BASE_ENV}. */
   passEnv: readonly string[];
 }
@@ -83,6 +88,7 @@ export function piEnvironment(options: PiEnvironmentOptions, caller: string, con
   env.PI_CODING_AGENT_DIR = options.agentDir;
   env[CALLER_ENV] = caller;
   env[CONTEXT_ENV] = contextId;
+  env[ARTIFACT_OUTBOX_ENV] = artifactOutbox(join(options.dataDir, "artifacts"), contextId);
   return env;
 }
 
