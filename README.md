@@ -19,6 +19,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0010. manifest は汎用の base をこのリポジトリに、環境固有の overlay を private のリポジトリに置く](docs/adr/0010-manifest-base-and-private-overlay.md)
 - [0011. エージェントは StatefulSet で動かし、ボリュームは volumeClaimTemplates で作る](docs/adr/0011-agent-as-statefulset.md)
 - [0012. 画像の成果物は汎用ホストが保存し、URI の artifact で返す](docs/adr/0012-return-images-as-artifacts-by-uri.md)
+- [0013. 調べもの係（web-researcher）: 検索は SearXNG、読めないときだけ headless Chrome](docs/adr/0013-web-researcher.md)
 
 ## 汎用ホスト
 
@@ -192,13 +193,16 @@ node dist/src/main.js --config /path/to/config.json
 
 TokenReview を呼ぶので、Kubernetes の Pod の中で動かす前提である。
 
-image は `Dockerfile` で作る。Node 24 の slim に、このホストと `@earendil-works/pi-coding-agent` 0.87.0（`pi` のコマンド）を入れる。
+image は `Dockerfile` で作る。Node 24 の slim に、このホストと `@earendil-works/pi-coding-agent` 0.87.1（`pi` のコマンド）を入れる。
+0.87.1 には、調べもの係が使う `gpt-6-sol` が `openai-codex` の一覧にある（0.87.0 には無い）。Wiki 管理人も同じ image の pi で動くので、あわせて 0.87.1 になる。
 fraction-agents の Pi パッケージ（下の「Pi パッケージ」）も `/opt/fraction-agents/pi-package` に入る。
 `node` ユーザーで動き、`/data` と `/agent` をマウント先として用意してある。設定は `/etc/fraction-agents/config.json` に置く。
 
 ```bash
 docker build -t fraction-agents-generic-host .
 ```
+
+調べもの係の image は、同じ Dockerfile の target `web-researcher` である（`docker build --target web-researcher .`）。汎用ホストの image に Chromium などを足したもので、汎用ホストの image は重くならない。
 
 ### 呼び出し方
 
@@ -322,6 +326,7 @@ image の `/opt/fraction-agents/pi-package` に入り、エージェントは se
 | `github-gate` | GitHub への書き込みの門番（ADR 0009）。agentDir に `github-gate.json` があるときだけ働く |
 | `ask-caller` | 呼び出し元に質問するツール `ask_caller`。汎用ホストの「聞き返し」で `INPUT_REQUIRED` になる |
 | `attach-image` | 返事に画像を添えるツール `attach_image`。汎用ホストの「画像の成果物」になる。ホストの外（`FRACTION_AGENTS_ARTIFACT_OUTBOX` が無いとき）では出ない |
+| `web-research` | SearXNG で検索するツール `searxng_search`、読めなかったページを記録する `report_unreadable`、ほかの検索の道具の遮断、タスクごとの読めなかった数のログ（ADR 0013）。agentDir に `web-research.json` があるときだけ働く。詳しくは `agents/web-researcher/README.md` |
 
 ### 画像を添える
 
@@ -418,6 +423,12 @@ pi は起動するので、`ask_caller` とログインは使える。エージ�
 `agents/wiki-keeper/` に、Wiki 管理人の agentDir の中身の雛形と、汎用ホストの設定の例を置く。
 リポジトリの URL や App の ID など環境ごとの値は、private の overlay で渡す（ADR 0010）。詳しくは `agents/wiki-keeper/README.md`。
 
+## 調べもの係
+
+`agents/web-researcher/` に、調べもの係の agentDir の中身の雛形と、汎用ホストの設定の例を置く（ADR 0013）。
+検索は SearXNG、ページの取得は Pi のパッケージ、読めないときと操作・スクリーンショットだけ headless の Chromium を使う。
+Chromium の入った別の image（`ghcr.io/yuanying/fraction-agents-web-researcher`）で動く。詳しくは `agents/web-researcher/README.md`。
+
 ## Kubernetes に置く
 
 manifest は kustomize で組む。このリポジトリには、どの環境でも使える base と、エージェントごとの kustomization を置く。
@@ -459,6 +470,15 @@ Pod の中のパス:
   `auth.json` を書けない。subPath の差し込みは ConfigMap の変更を追わないが、ConfigMap の名前に中身の hash が付くので、
   変更を適用すると Pod が作り直される。
 - probe は `/healthz` を見る。
+
+調べもの係（`deploy/agents/web-researcher`）も同じ形で、次が違う。
+
+- 名前は `web-researcher`（PVC は `data-web-researcher-0`）。ConfigMap は `web-researcher-agent-dir`（`AGENTS.md`・`settings.json`）と
+  `web-researcher-config`（`config.json`・`web-research.json`）。`web-research.json` は `/agent/web-research.json` に差し込む。
+- image は `ghcr.io/yuanying/fraction-agents-web-researcher`。overlay はこの名前で tag を決める。
+- image が amd64 だけなので、`kubernetes.io/arch: amd64` のノードに置く。
+- Chromium のために、メモリの requests を 1Gi、limits を 3Gi にする。
+- Secret は無い。SearXNG の URL は `web-research.json` で渡す。
 
 ### overlay で決めるもの
 
@@ -538,5 +558,6 @@ kubectl exec -it -n fraction-agents wiki-keeper-0 -- env PI_CODING_AGENT_DIR=/ag
 
 ### image
 
-tag `v<版>` を push すると、GitHub Actions が `ghcr.io/yuanying/fraction-agents:<版>`（`v` を除いた版）を build して push する。
+tag `v<版>` を push すると、GitHub Actions が `ghcr.io/yuanying/fraction-agents:<版>`（`v` を除いた版）と、
+調べもの係の `ghcr.io/yuanying/fraction-agents-web-researcher:<版>`（Dockerfile の target `web-researcher`）を build して push する。
 PR では build だけを確かめる。初めて push した package は private で作られるので、GitHub の画面で public にする。

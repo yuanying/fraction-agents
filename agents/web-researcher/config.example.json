@@ -1,0 +1,20 @@
+{
+  "name": "web-researcher",
+  "description": "調べもの係。頼まれたことをウェブで調べ、出典の URL を付けて短く答える。スクリーンショットも撮れる。ログインが要るページは読めない。",
+  "skills": [
+    { "id": "research", "name": "調べもの", "description": "ウェブを検索してページを読み、出典の URL を付けて答える。", "examples": ["Node.js の最新の LTS の版と、その終了予定日を調べて"] },
+    { "id": "screenshot", "name": "スクリーンショット", "description": "指定のページのスクリーンショットを撮り、画像の成果物で返す。", "examples": ["example.com のトップページのスクリーンショットを撮って"] }
+  ],
+  "publicUrl": "https://agents.example.test/web-researcher/",
+  "allowedCallers": [
+    "system:serviceaccount:fraction-agents:owner",
+    "system:serviceaccount:fraction-agents:claude",
+    "system:serviceaccount:fraction-agents:natsumi"
+  ],
+  "agentDir": "/agent",
+  "dataDir": "/data",
+  "piCommand": ["pi", "--exclude-tools", "web_search,agent_browser_web_search,agent_browser_electron"],
+  "contextWorkspace": {
+    "prepare": ["mkdir", "-p"]
+  }
+}

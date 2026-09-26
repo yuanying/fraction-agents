@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: agent
+spec:
+  template:
+    spec:
+      # The image is built for amd64 only.
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: host
+          # Headless Chromium besides pi. The limit keeps a runaway page from starving the node.
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              memory: 3Gi
+          volumeMounts:
+            - name: config
+              mountPath: /agent/web-research.json
+              subPath: web-research.json
+              readOnly: true
+      volumes:
+        - name: agent-dir
+          configMap:
+            name: web-researcher-agent-dir
+        - name: config
+          configMap:
+            name: web-researcher-config

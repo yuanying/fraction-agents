@@ -1,0 +1,37 @@
+# The web researcher (ADR 0013) on its own image: the generic host with a browser. The environment's overlay refers
+# to this directory as a remote base, pinned to a version, and sets the namespace, the image's tag, the StorageClass
+# and the ConfigMap web-researcher-config.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - ../../../agents/web-researcher
+labels:
+  - pairs:
+      app.kubernetes.io/instance: web-researcher
+    includeSelectors: true
+images:
+  - name: ghcr.io/yuanying/fraction-agents
+    newName: ghcr.io/yuanying/fraction-agents-web-researcher
+patches:
+  - target: {kind: StatefulSet, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: web-researcher
+  - target: {kind: Service, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: web-researcher
+  - target: {kind: ServiceAccount, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: web-researcher
+  - target: {kind: ClusterRoleBinding, name: agent-auth-delegator}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: web-researcher-auth-delegator
+  - path: statefulset.yaml

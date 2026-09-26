@@ -1,0 +1,3 @@
+{
+  "URLBlocklist": ["file://*", "localhost", "127.0.0.1", "[::1]", "cluster.local", "169.254.169.254"]
+}

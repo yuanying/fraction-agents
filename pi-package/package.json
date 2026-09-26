@@ -1,13 +1,18 @@
 {
   "name": "fraction-agents-pi",
   "version": "0.1.0",
-  "description": "Pi extensions for fraction-agents: a GitHub gate (push, pull request and merge tools, and guards on write, edit and bash) a tool that asks the caller, and a tool that returns images to the caller.",
+  "description": "Pi extensions for fraction-agents: a GitHub gate (push, pull request and merge tools, and guards on write, edit and bash), a tool that asks the caller, a tool that returns images to the caller, and web research (search through SearXNG, and a count of unreadable pages).",
   "private": true,
   "type": "module",
   "license": "MIT",
   "keywords": ["pi-package"],
   "pi": {
-    "extensions": ["./extensions/github-gate.ts", "./extensions/ask-caller.ts", "./extensions/attach-image.ts"]
+    "extensions": [
+      "./extensions/github-gate.ts",
+      "./extensions/ask-caller.ts",
+      "./extensions/attach-image.ts",
+      "./extensions/web-research.ts"
+    ]
   },
   "peerDependencies": {
     "typebox": "*"
