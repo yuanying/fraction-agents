@@ -1,0 +1,11 @@
+{
+  "name": "fraction-agents-web-researcher-packages",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The third-party Pi packages and the browser CLI in the web researcher's image (ADR 0013). Pi supplies their peer dependencies.",
+  "dependencies": {
+    "@kvidzibo/pi-web-access": "0.1.1",
+    "agent-browser": "0.38.1",
+    "pi-agent-browser-native": "0.7.1"
+  }
+}
