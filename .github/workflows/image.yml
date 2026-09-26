@@ -1,5 +1,6 @@
-# The generic host's image. A tag v<version> pushes ghcr.io/yuanying/fraction-agents:<version>;
-# a pull request only builds it.
+# The images: the generic host (ghcr.io/yuanying/fraction-agents) and the web researcher's, which adds a browser
+# (ghcr.io/yuanying/fraction-agents-web-researcher, the Dockerfile's web-researcher target). A tag v<version> pushes
+# both as <version>; a pull request only builds them.
 name: image
 
 on:
@@ -13,6 +14,13 @@ permissions:
 jobs:
   image:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: fraction-agents
+            target: host
+          - image: fraction-agents-web-researcher
+            target: web-researcher
     permissions:
       contents: read
       packages: write
@@ -22,11 +30,12 @@ jobs:
         id: name
         env:
           REF_NAME: ${{ github.ref_name }}
+          IMAGE: ${{ matrix.image }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = push ]; then
-            echo "tag=ghcr.io/yuanying/fraction-agents:${REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "tag=ghcr.io/yuanying/${IMAGE}:${REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=fraction-agents:pr" >> "$GITHUB_OUTPUT"
+            echo "tag=${IMAGE}:pr" >> "$GITHUB_OUTPUT"
           fi
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -38,7 +47,8 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          target: ${{ matrix.target }}
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.name.outputs.tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

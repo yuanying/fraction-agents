@@ -1,5 +1,5 @@
 {
   "executablePath": "/usr/bin/chromium",
-  "args": "--no-sandbox",
+  "args": "--no-sandbox,--disable-dev-shm-usage",
   "contentBoundaries": true
 }
