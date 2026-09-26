@@ -18,6 +18,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0009. Wiki 管理人の置き方と、GitHub への書き込みの門番](docs/adr/0009-wiki-keeper-placement-and-gatekeeping.md)
 - [0010. manifest は汎用の base をこのリポジトリに、環境固有の overlay を private のリポジトリに置く](docs/adr/0010-manifest-base-and-private-overlay.md)
 - [0011. エージェントは StatefulSet で動かし、ボリュームは volumeClaimTemplates で作る](docs/adr/0011-agent-as-statefulset.md)
+- [0012. 画像の成果物は汎用ホストが保存し、URI の artifact で返す](docs/adr/0012-return-images-as-artifacts-by-uri.md)
 
 ## 汎用ホスト
 
@@ -38,6 +39,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
   - 設定の `contextWorkspace` があれば、context ごとに `<workDir>/<contextId>` で pi を動かす（下の「context ごとの作業ディレクトリ」）。
 - 1 つの Task は、pi への 1 回の prompt である。
   - 最後の assistant の文を、`response` という名前の artifact として返す。
+  - エージェントが画像を添えたときは、その後に画像ごとの artifact を足す（下の「画像の成果物」）。
   - モデルの呼び出しが失敗したら `FAILED`、pi が途中で終了したら `FAILED`、CancelTask で止めたら `CANCELED` になる。
   - 続きの依頼は、同じ contextId で新しいメッセージを送る。
   - pi の中の拡張が呼び出し元に質問したとき（下の「聞き返し」）だけ、Task は `INPUT_REQUIRED` で止まる。
@@ -67,6 +69,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 | `piCommand` | | `["pi"]` | pi を起動するコマンド。後ろに `--mode rpc --session <file>` を足して起動する |
 | `passEnv` | | `[]` | 既定の最小限に加えて pi に渡す環境変数の名前。名前だけを書き、値はホストの環境から取る |
 | `inputTimeoutSeconds` | | `86400`（1 日） | 質問への答えを待つ秒数。過ぎたら質問を取り下げ、Task を `FAILED` にする |
+| `artifactRetentionSeconds` | | `604800`（7 日） | 画像の成果物を返し続ける秒数。作ってから数え、過ぎたら 404 にして消す |
 | `contextWorkspace` | | なし | context ごとの作業ディレクトリを用意するコマンド。`prepare`（必須）と `remove` の 2 つで、どちらもコマンドの配列 |
 
 例:
@@ -110,6 +113,7 @@ TokenReview には Pod の ServiceAccount の token（`/var/run/secrets/kubernet
 | `PI_CODING_AGENT_DIR` | 設定の `agentDir` |
 | `FRACTION_AGENTS_CALLER` | その context の呼び出し元の名前（`system:serviceaccount:<namespace>:<name>`）。Pi の拡張は、これを見て呼び出し元ごとに振る舞いを変えられる |
 | `FRACTION_AGENTS_CONTEXT_ID` | その context の ID。ホストが採番したもの |
+| `FRACTION_AGENTS_ARTIFACT_OUTBOX` | その context の画像の受け渡しの場所（`<dataDir>/artifacts/outbox/<contextId>`）。`attach_image` が使う（下の「画像の成果物」） |
 
 ホストの環境に資格（`OPENAI_API_KEY`、`HF_TOKEN` など）があっても、`passEnv` に書かない限り pi には渡らない。
 エージェントに資格を渡すときは、その名前を `passEnv` に書く。
@@ -147,6 +151,33 @@ pi の拡張が `ctx.ui.input` か `ctx.ui.editor` で質問すると（RPC の 
 ```bash
 a2a task get -a https://agents.example.test/wiki-keeper/ <task-id>      # 状態が INPUT_REQUIRED なら、メッセージが質問
 a2a send -a https://agents.example.test/wiki-keeper/ --task-id <task-id> "index の方です"
+```
+
+### 画像の成果物
+
+エージェントは、Task の返事に画像（スクリーンショットなど）を添えられる（ADR 0012）。
+
+- Pi の中では、Pi パッケージのツール `attach_image` に画像のファイルと説明の 1 行を渡して添える（下の「Pi パッケージ」）。
+- Task が完了すると、`response` の artifact の後に、画像ごとに artifact を 1 つ足す。
+  - parts は URL の part 1 つで、`url` が取得先、`mediaType` が形式、`filename` が表示用の名前。artifact の `description` が説明。
+  - 取得先は `publicUrl` と同じ origin の `/artifacts/<ID>`。ID はホストが乱数で振る。
+- 形式は PNG・JPEG・WebP だけで、ファイルの中身で判定する。1 枚は 10 MiB まで、1 つの Task で 8 枚まで。超えたもの、形式の違うものは返さない。
+- `FAILED` と `CANCELED` で終わった Task の画像は返さずに捨てる。
+- `GET /artifacts/<ID>` は、A2A の呼び出しと同じ token を要る。token が無い・違うときは 401、許していない ServiceAccount は 403。
+  画像を返すのは、その Task を送った呼び出し元にだけで、他の呼び出し元・知らない ID・期限を過ぎた ID には 404 を返す。
+  本文は画像そのもので、`Content-Type` と `Content-Length` を付ける。
+- 画像は `<dataDir>/artifacts/files/` に置き、記録は `state.db` に持つ。ホストを再起動しても取れる。
+  `artifactRetentionSeconds` を過ぎたものは、定期の掃除でファイルと記録を消す。
+
+`attach_image` を使わずに渡すこともできる。`FRACTION_AGENTS_ARTIFACT_OUTBOX` のディレクトリに、画像のファイルと、同じ名前の幹の JSON
+（`file` に画像のファイル名、`name` に表示用の名前、`description` に説明）を置けば、Task の完了時にホストが名前の順に引き取る。
+ホストはツールと同じ検査をする。
+
+`a2a-cli` で取得する例:
+
+```bash
+a2a task get -a https://agents.example.test/web-researcher/ <task-id>   # artifact の url を見る
+curl -fsS -H "Authorization: Bearer $(cat ~/.config/fraction-agents/tokens/claude)" -o shot.png <url>
 ```
 
 ### 起動
@@ -291,6 +322,21 @@ image の `/opt/fraction-agents/pi-package` に入り、エージェントは se
 |---|---|
 | `github-gate` | GitHub への書き込みの門番（ADR 0009）。agentDir に `github-gate.json` があるときだけ働く |
 | `ask-caller` | 呼び出し元に質問するツール `ask_caller`。汎用ホストの「聞き返し」で `INPUT_REQUIRED` になる |
+| `attach-image` | 返事に画像を添えるツール `attach_image`。汎用ホストの「画像の成果物」になる。ホストの外（`FRACTION_AGENTS_ARTIFACT_OUTBOX` が無いとき）では出ない |
+
+### 画像を添える
+
+`attach_image` は、次の引数で呼ぶ。
+
+| 引数 | 必須 | 意味 |
+|---|---|---|
+| `path` | 必須 | 画像のファイル。相対パスなら作業ディレクトリから辿る |
+| `description` | 必須 | 何の画像かを 1 行で。artifact の `description` になる |
+| `name` | | 呼び出し元に見せる短いファイル名。省けばファイル自身の名前 |
+
+- ツールは、その場で形式（中身で PNG・JPEG・WebP を判定）、大きさ（10 MiB まで）、枚数（8 枚まで）を確かめ、だめなら理由をモデルに返す。
+- 呼んだ時点のファイルの中身を写すので、後でファイルを変えても返る画像は変わらない。シンボリックリンクは受け付けない。
+- スクリーンショットは、まずファイルに撮ってから添える。エージェントの AGENTS.md に、いつ添えるかを書いておく。
 
 ### GitHub の門番
 

@@ -1,7 +1,10 @@
 // A stand-in for `pi --mode rpc --session <file>` that speaks just enough of the RPC protocol for the host's tests.
 // It remembers the conversation by appending one line per prompt to the session file, so a restarted process
 // on the same file continues the count. Every start is logged to `spawns.log` in the working directory.
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { IMAGES } from "./images.ts";
 
 const sessionIndex = process.argv.indexOf("--session");
 const sessionFile = sessionIndex >= 0 ? process.argv[sessionIndex + 1] : undefined;
@@ -97,6 +100,28 @@ function prompt(message: string): void {
       const confirmed = await dialog("confirm", { title: confirm[1], message: "Sure?" });
       settle(assistant(`select=${describeAnswer(chosen)}|confirm=${describeAnswer(confirmed)}`));
     })();
+    return;
+  }
+  // "images:<kind>,<kind>" hands images to the host the way the attach_image tool does, then replies (or fails
+  // with "images-then-fail:"). Kinds: png, jpeg, webp, big (over 10 MiB), text (not an image).
+  const images = /^images(-then-fail)?:(.*)$/.exec(message);
+  if (images) {
+    const outbox = process.env.FRACTION_AGENTS_ARTIFACT_OUTBOX;
+    if (!outbox) {
+      settle(assistant("", "error", "no outbox"));
+      return;
+    }
+    mkdirSync(outbox, { recursive: true });
+    images[2]!.split(",").forEach((kind, index) => {
+      const stem = `${String(Date.now()).padStart(15, "0")}-${String(index).padStart(3, "0")}`;
+      writeFileSync(join(outbox, `${stem}.img`), IMAGES[kind]!());
+      writeFileSync(
+        join(outbox, `${stem}.json`),
+        JSON.stringify({ file: `${stem}.img`, name: `shot-${index + 1}.${kind}`, description: `picture ${index + 1} (${kind})` }),
+      );
+    });
+    if (images[1]) settle(assistant("", "error", "model exploded after the pictures"));
+    else settle(assistant(`attached:${images[2]}`));
     return;
   }
   const wait = /^wait:(\d+)$/.exec(message);

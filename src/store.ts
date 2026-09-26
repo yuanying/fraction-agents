@@ -17,13 +17,26 @@ export interface ContextRecord {
   lastUsedAt: number;
 }
 
+/** An image a task returned, kept in the artifacts directory under its ID. */
+export interface ArtifactRecord {
+  /** Random, and the file's name. Only such IDs are ever used as file names. */
+  id: string;
+  owner: string;
+  taskId: string;
+  mediaType: string;
+  size: number;
+  /** Milliseconds since the epoch. */
+  createdAt: number;
+}
+
 export interface Store {
   tasks: SqliteTaskStore;
   contexts: ContextRegistry;
+  artifacts: ArtifactRegistry;
   close(): void;
 }
 
-/** Opens (and creates if needed) the host's SQLite database of tasks and contexts. */
+/** Opens (and creates if needed) the host's SQLite database of tasks, contexts and artifacts. */
 export function openStore(path: string): Store {
   const db = new DatabaseSync(path);
   db.exec(`
@@ -44,8 +57,21 @@ export function openStore(path: string): Store {
       session_file TEXT NOT NULL,
       last_used_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS artifacts (
+      id TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      media_type TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
   `);
-  return { tasks: new SqliteTaskStore(db), contexts: new ContextRegistry(db), close: () => db.close() };
+  return {
+    tasks: new SqliteTaskStore(db),
+    contexts: new ContextRegistry(db),
+    artifacts: new ArtifactRegistry(db),
+    close: () => db.close(),
+  };
 }
 
 /** A TaskStore that survives restarts. Every task belongs to the caller that created it (ADR 0003). */
@@ -224,6 +250,60 @@ export class ContextRegistry {
     this.#db.prepare("DELETE FROM tasks WHERE context_id = ?").run(contextId);
     this.#db.prepare("DELETE FROM contexts WHERE context_id = ?").run(contextId);
   }
+}
+
+/** Which caller each stored artifact belongs to, and what it is. */
+export class ArtifactRegistry {
+  readonly #db: DatabaseSync;
+
+  constructor(db: DatabaseSync) {
+    this.#db = db;
+  }
+
+  add(record: ArtifactRecord): void {
+    this.#db
+      .prepare("INSERT INTO artifacts (id, owner, task_id, media_type, size, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(record.id, record.owner, record.taskId, record.mediaType, record.size, record.createdAt);
+  }
+
+  /** The artifact, if it exists and belongs to the caller. Someone else's artifact is indistinguishable from none. */
+  get(id: string, owner: string): ArtifactRecord | undefined {
+    const row = this.#db
+      .prepare("SELECT id, owner, task_id, media_type, size, created_at FROM artifacts WHERE id = ? AND owner = ?")
+      .get(id, owner) as ArtifactRow | undefined;
+    return row ? artifactFromRow(row) : undefined;
+  }
+
+  createdBefore(cutoff: number): ArtifactRecord[] {
+    const rows = this.#db
+      .prepare("SELECT id, owner, task_id, media_type, size, created_at FROM artifacts WHERE created_at < ?")
+      .all(cutoff) as unknown as ArtifactRow[];
+    return rows.map(artifactFromRow);
+  }
+
+  remove(id: string): void {
+    this.#db.prepare("DELETE FROM artifacts WHERE id = ?").run(id);
+  }
+}
+
+interface ArtifactRow {
+  id: string;
+  owner: string;
+  task_id: string;
+  media_type: string;
+  size: number;
+  created_at: number;
+}
+
+function artifactFromRow(row: ArtifactRow): ArtifactRecord {
+  return {
+    id: row.id,
+    owner: row.owner,
+    taskId: row.task_id,
+    mediaType: row.media_type,
+    size: row.size,
+    createdAt: row.created_at,
+  };
 }
 
 interface ContextRow {

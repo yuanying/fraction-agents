@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -9,6 +9,7 @@ import { A2A_AUDIENCE, type TokenReviewer } from "../src/auth.ts";
 import { parseConfig, type Config } from "../src/config.ts";
 import { createHost, type Host } from "../src/host.ts";
 import { PI_BASE_ENV } from "../src/sessions.ts";
+import { IMAGES } from "./fixtures/images.ts";
 
 const OWNER = "system:serviceaccount:fraction-agents:owner";
 const CLAUDE = "system:serviceaccount:fraction-agents:claude";
@@ -280,7 +281,15 @@ describe("tasks and contexts", () => {
       for (const name of ["HF_TOKEN", "OPENAI_API_KEY", "EXTRA_DENIED"]) {
         assert.equal(names.includes(name), false, `${name} must not reach pi`);
       }
-      for (const name of ["EXTRA_ALLOWED", "PI_CODING_AGENT_DIR", "FRACTION_AGENTS_CALLER", "FRACTION_AGENTS_CONTEXT_ID", "PATH", "HOME"]) {
+      for (const name of [
+        "EXTRA_ALLOWED",
+        "PI_CODING_AGENT_DIR",
+        "FRACTION_AGENTS_CALLER",
+        "FRACTION_AGENTS_CONTEXT_ID",
+        "FRACTION_AGENTS_ARTIFACT_OUTBOX",
+        "PATH",
+        "HOME",
+      ]) {
         assert.equal(names.includes(name), true, `${name} reaches pi`);
       }
       const allowed = new Set([
@@ -288,6 +297,7 @@ describe("tasks and contexts", () => {
         "PI_CODING_AGENT_DIR",
         "FRACTION_AGENTS_CALLER",
         "FRACTION_AGENTS_CONTEXT_ID",
+        "FRACTION_AGENTS_ARTIFACT_OUTBOX",
         ...PI_BASE_ENV,
       ]);
       assert.deepEqual(
@@ -647,5 +657,145 @@ describe("asking the caller", () => {
     const second = await start(config);
     const again = await rpc(second.url, "owner", "GetTask", { id: task.id });
     assert.equal(again.result.status.state, "TASK_STATE_FAILED");
+  });
+});
+
+describe("image artifacts", () => {
+  const ARTIFACT_URL = /^https:\/\/agents\.example\.test\/artifacts\/([A-Za-z0-9-]{32,})$/;
+
+  function imageArtifacts(task: Json): Json[] {
+    return (task.artifacts ?? []).slice(1);
+  }
+
+  function artifactId(artifact: Json): string {
+    const match = ARTIFACT_URL.exec(artifact.parts[0].url);
+    assert.ok(match, `${artifact.parts[0].url} is an artifact URL on the agent's public origin`);
+    return match[1]!;
+  }
+
+  async function download(url: string, token: string | undefined, id: string): Promise<Response> {
+    return fetch(`${url}/artifacts/${id}`, token ? { headers: { authorization: `Bearer ${token}` } } : {});
+  }
+
+  it("adds one artifact with one file part per image after the text of the reply", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "images:png,jpeg,webp");
+    const done = await waitForTask(url, "owner", task.id);
+    assert.equal(done.status.state, "TASK_STATE_COMPLETED");
+    assert.equal(resultText(done), "attached:png,jpeg,webp", "the text of the reply comes first, as before");
+    const images = imageArtifacts(done);
+    assert.equal(images.length, 3);
+    const mediaTypes = ["image/png", "image/jpeg", "image/webp"];
+    images.forEach((artifact, index) => {
+      assert.equal(artifact.parts.length, 1);
+      const part = artifact.parts[0];
+      assert.equal(part.mediaType, mediaTypes[index]);
+      assert.equal(part.filename, `shot-${index + 1}.${["png", "jpeg", "webp"][index]}`);
+      assert.equal(artifact.description, `picture ${index + 1} (${["png", "jpeg", "webp"][index]})`);
+      assert.ok(artifactId(artifact));
+    });
+    assert.equal(new Set(images.map(artifactId)).size, 3, "every image has an ID of its own");
+  });
+
+  it("keeps the reply as it was when there are no images", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "hello");
+    const done = await waitForTask(url, "owner", task.id);
+    assert.equal(done.artifacts.length, 1);
+  });
+
+  it("serves the image to the caller with its type and length", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "images:png");
+    const [artifact] = imageArtifacts(await waitForTask(url, "owner", task.id));
+    const response = await download(url, "owner", artifactId(artifact));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/png");
+    const expected = IMAGES.png!();
+    assert.equal(response.headers.get("content-length"), String(expected.length));
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), expected);
+  });
+
+  it("asks for the same token as the A2A calls", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "images:png");
+    const id = artifactId(imageArtifacts(await waitForTask(url, "owner", task.id))[0]);
+    const missing = await download(url, undefined, id);
+    assert.equal(missing.status, 401);
+    assert.equal((await download(url, "nobody", id)).status, 401);
+    assert.equal((await download(url, "apiserver", id)).status, 401, "a token for another audience");
+    assert.equal((await download(url, "stranger", id)).status, 403, "a ServiceAccount that is not allowed");
+  });
+
+  it("does not show one caller's image to another", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "images:png");
+    const id = artifactId(imageArtifacts(await waitForTask(url, "owner", task.id))[0]);
+    assert.equal((await download(url, "claude", id)).status, 404);
+  });
+
+  it("answers 404 for an ID it does not know", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    assert.equal((await download(url, "owner", "0123456789abcdef0123456789abcdef01234567")).status, 404);
+    assert.equal((await download(url, "owner", "..%2Fstate.db")).status, 404);
+  });
+
+  it("leaves out files that are not images or are over 10 MiB", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "images:text,big,png");
+    const images = imageArtifacts(await waitForTask(url, "owner", task.id));
+    assert.deepEqual(
+      images.map((artifact: Json) => artifact.parts[0].filename),
+      ["shot-3.png"],
+    );
+  });
+
+  it("returns at most 8 images from one task", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", `images:${Array(10).fill("png").join(",")}`);
+    const images = imageArtifacts(await waitForTask(url, "owner", task.id));
+    assert.deepEqual(
+      images.map((artifact: Json) => artifact.parts[0].filename),
+      [1, 2, 3, 4, 5, 6, 7, 8].map((n) => `shot-${n}.png`),
+    );
+  });
+
+  it("drops the images of a task that did not complete", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const failed = await send(url, "owner", "images-then-fail:png");
+    const done = await waitForTask(url, "owner", failed.id);
+    assert.equal(done.status.state, "TASK_STATE_FAILED");
+    assert.deepEqual(done.artifacts ?? [], []);
+    const next = await send(url, "owner", "hello", { contextId: failed.contextId });
+    assert.equal((await waitForTask(url, "owner", next.id)).artifacts.length, 1, "the next task does not pick them up");
+  });
+
+  it("keeps serving the images across a restart of the host", async () => {
+    const config = makeConfig(tempDir());
+    const first = await start(config);
+    const task = await send(first.url, "owner", "images:png");
+    const id = artifactId(imageArtifacts(await waitForTask(first.url, "owner", task.id))[0]);
+    await first.host.close();
+    running.splice(running.indexOf(first.host), 1);
+    const second = await start(config);
+    assert.equal((await download(second.url, "owner", id)).status, 200);
+  });
+
+  it("stops serving images past the retention period and deletes them", async () => {
+    let clock = Date.parse("2026-09-26T00:00:00Z");
+    const dir = tempDir();
+    const { url, host, config } = await start(makeConfig(dir, { artifactRetentionSeconds: 3600 }), () => clock);
+    const task = await send(url, "owner", "images:png");
+    const id = artifactId(imageArtifacts(await waitForTask(url, "owner", task.id))[0]);
+    const stored = () => readdirSync(join(config.dataDir, "artifacts"), { recursive: true }).filter((name) => String(name).includes(id));
+
+    clock += 3599_000;
+    assert.equal((await download(url, "owner", id)).status, 200, "still within the retention period");
+    clock += 2_000;
+    assert.equal((await download(url, "owner", id)).status, 404, "expired even before the sweep");
+    assert.equal(stored().length, 1);
+    await host.sweep();
+    assert.deepEqual(stored(), [], "the file is deleted");
+    assert.equal((await download(url, "owner", id)).status, 404);
   });
 });
