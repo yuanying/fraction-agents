@@ -29,6 +29,7 @@ describe("config", () => {
     assert.deepEqual(config.passEnv, []);
     assert.equal(config.contextWorkspace, undefined);
     assert.equal(config.inputTimeoutSeconds, 86400);
+    assert.equal(config.artifactRetentionSeconds, 604800);
   });
 
   it("takes the commands that prepare and remove a context's workspace", () => {
@@ -66,6 +67,7 @@ describe("config", () => {
       idleTimeoutSeconds: 60,
       sessionRetentionSeconds: 3600,
       inputTimeoutSeconds: 600,
+      artifactRetentionSeconds: 86400,
       workDir: "/work",
       piCommand: ["node", "fake-pi.ts"],
       skills: [{ id: "ingest", name: "Ingest", description: "Ingests a source.", tags: ["wiki"], examples: ["add this"] }],
@@ -75,6 +77,7 @@ describe("config", () => {
     assert.equal(config.idleTimeoutSeconds, 60);
     assert.equal(config.sessionRetentionSeconds, 3600);
     assert.equal(config.inputTimeoutSeconds, 600);
+    assert.equal(config.artifactRetentionSeconds, 86400);
     assert.equal(config.workDir, "/work");
     assert.deepEqual(config.piCommand, ["node", "fake-pi.ts"]);
     assert.deepEqual(config.skills, [
@@ -96,6 +99,7 @@ describe("config", () => {
   it("rejects non-positive durations", () => {
     assert.throws(() => parseConfig({ ...minimal, idleTimeoutSeconds: 0 }), /idleTimeoutSeconds/);
     assert.throws(() => parseConfig({ ...minimal, sessionRetentionSeconds: -1 }), /sessionRetentionSeconds/);
+    assert.throws(() => parseConfig({ ...minimal, artifactRetentionSeconds: 0 }), /artifactRetentionSeconds/);
   });
 
   it("rejects relative directories", () => {

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { createReadStream, mkdirSync, rmSync } from "node:fs";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import { jsonRpcHandler } from "@a2a-js/sdk/server/express";
 import express, { type Request } from "express";
 
 import { agentCardJson, buildAgentCard } from "./agent-card.ts";
+import { Artifacts } from "./artifacts.ts";
 import { authenticate, type TokenReviewer } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { PiAgentExecutor } from "./executor.ts";
@@ -26,7 +27,10 @@ export interface HostOptions {
 export interface Host {
   /** Starts serving and resolves with the base URL. */
   listen(port: number, hostname?: string): Promise<string>;
-  /** Deletes the session files and records of contexts unused for longer than the retention period. */
+  /**
+   * Deletes the session files and records of contexts unused for longer than the retention period, and the images
+   * past theirs.
+   */
   sweep(): Promise<void>;
   close(): Promise<void>;
 }
@@ -58,6 +62,13 @@ export function createHost(options: HostOptions): Host {
   const store = openStore(join(config.dataDir, "state.db"));
   const orphaned = store.tasks.failUnfinished("The agent host restarted before the task finished.");
   if (orphaned > 0) console.log(`marked ${orphaned} unfinished task(s) from a previous run as failed`);
+  const artifacts = new Artifacts({
+    dir: join(config.dataDir, "artifacts"),
+    registry: store.artifacts,
+    now,
+    retentionMs: config.artifactRetentionSeconds * 1000,
+  });
+  artifacts.discardAll();
 
   const workspaces = new ContextWorkspaces(config.workDir, config.contextWorkspace);
   const sessions = new PiSessions({
@@ -66,6 +77,7 @@ export function createHost(options: HostOptions): Host {
     workspaces,
     idleTimeoutMs: config.idleTimeoutSeconds * 1000,
     passEnv: config.passEnv,
+    dataDir: config.dataDir,
   });
   const removeWorkspace = async (contextId: string, caller: string) => {
     const removed = await workspaces.remove(contextId, piEnvironment(config, caller, contextId));
@@ -75,6 +87,8 @@ export function createHost(options: HostOptions): Host {
     contexts: store.contexts,
     sessions,
     sessionsDir,
+    artifacts,
+    artifactUrl: (id) => new URL(`/artifacts/${id}`, config.publicUrl).href,
     now,
     inputTimeoutMs: config.inputTimeoutSeconds * 1000,
     failTask: (taskId, caller, reason) => store.tasks.fail(taskId, caller, reason),
@@ -108,6 +122,24 @@ export function createHost(options: HostOptions): Host {
     callers.set(req, result.caller);
     next();
   });
+  // The images tasks returned, to the caller that sent the task (ADR 0012).
+  app.get("/artifacts/:id", (req, res) => {
+    const found = artifacts.open(req.params.id, callers.get(req)!);
+    if (!found) {
+      res.status(404).json({ error: "artifact not found" });
+      return;
+    }
+    res.setHeader("Content-Type", found.record.mediaType);
+    res.setHeader("Content-Length", found.record.size);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    createReadStream(found.path)
+      .on("error", (error) => {
+        console.error(`artifact ${req.params.id}: reading failed: ${error.message}`);
+        res.destroy();
+      })
+      .pipe(res);
+  });
   app.use(
     jsonRpcHandler({
       requestHandler,
@@ -122,6 +154,7 @@ export function createHost(options: HostOptions): Host {
       await sessions.stop(context.contextId);
       await removeWorkspace(context.contextId, context.owner);
       rmSync(join(sessionsDir, context.sessionFile), { force: true });
+      artifacts.discard(context.contextId);
       store.contexts.remove(context.contextId);
       console.log(`context ${context.contextId}: deleted after the retention period`);
     }
@@ -131,10 +164,11 @@ export function createHost(options: HostOptions): Host {
       await removeWorkspace(contextId, "");
       console.log(`context ${contextId}: removed a workspace left behind`);
     }
+    artifacts.sweep();
   };
   const sweepTimer = setInterval(
     () => void sweep().catch((error) => console.error("sweep failed:", error)),
-    Math.min(config.sessionRetentionSeconds, 3600) * 1000,
+    Math.min(config.sessionRetentionSeconds, config.artifactRetentionSeconds, 3600) * 1000,
   );
   sweepTimer.unref();
 

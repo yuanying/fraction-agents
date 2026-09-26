@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Role, TaskState, type Message } from "@a2a-js/sdk";
 import { AgentEvent, type AgentExecutor, type ExecutionEventBus, type RequestContext } from "@a2a-js/sdk/server";
 
+import type { Artifacts } from "./artifacts.ts";
 import type { PiSessions, PromptRun } from "./sessions.ts";
 import type { ContextRegistry } from "./store.ts";
 
@@ -11,6 +12,9 @@ export interface PiAgentExecutorOptions {
   contexts: ContextRegistry;
   sessions: PiSessions;
   sessionsDir: string;
+  /** The images tasks hand over, and the URL each is served at. */
+  artifacts: Artifacts;
+  artifactUrl: (id: string) => string;
   now: () => number;
   /** How long a question to the caller stays open before the task fails. */
   inputTimeoutMs: number;
@@ -30,7 +34,8 @@ interface Waiting {
 }
 
 /**
- * Runs each A2A task as one prompt in its context's pi session and reports the last assistant text as the result.
+ * Runs each A2A task as one prompt in its context's pi session and reports the last assistant text as the result,
+ * followed by one artifact per image the agent handed over (ADR 0012).
  * When an extension in pi asks a free-form question (`ctx.ui.input`), the task goes to INPUT_REQUIRED with the
  * question; the caller's next message to the same task is the answer, and the same prompt carries on.
  */
@@ -146,12 +151,40 @@ export class PiAgentExecutor implements AgentExecutor {
             metadata: {},
           }),
         );
+        for (const image of this.#options.artifacts.collect(contextId, caller, taskId)) {
+          bus.publish(
+            AgentEvent.artifactUpdate({
+              taskId,
+              contextId,
+              artifact: {
+                artifactId: randomUUID(),
+                name: image.name,
+                description: image.description,
+                parts: [
+                  {
+                    content: { $case: "url", value: this.#options.artifactUrl(image.id) },
+                    metadata: {},
+                    filename: image.name,
+                    mediaType: image.mediaType,
+                  },
+                ],
+                metadata: {},
+                extensions: [],
+              },
+              append: false,
+              lastChunk: true,
+              metadata: {},
+            }),
+          );
+        }
         publishStatus(bus, taskId, contextId, TaskState.TASK_STATE_COMPLETED);
         return;
       case "failed":
+        this.#options.artifacts.discard(contextId);
         publishStatus(bus, taskId, contextId, TaskState.TASK_STATE_FAILED, outcome.error);
         return;
       case "aborted":
+        this.#options.artifacts.discard(contextId);
         publishStatus(bus, taskId, contextId, TaskState.TASK_STATE_CANCELED, "The task was canceled.");
         return;
     }
@@ -167,6 +200,7 @@ export class PiAgentExecutor implements AgentExecutor {
     await this.#options.sessions.abort(taskId);
     // Waits (for a while) until the prompt has settled, so the context is free again when this returns.
     await Promise.race([drain(waiting.run), new Promise((resolve) => setTimeout(resolve, SETTLE_WAIT_MS).unref())]);
+    this.#options.artifacts.discard(waiting.contextId);
     return waiting;
   }
 
