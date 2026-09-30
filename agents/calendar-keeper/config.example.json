@@ -1,0 +1,21 @@
+{
+  "name": "calendar-keeper",
+  "description": "カレンダー係。本人の Google Calendar の予定を調べ、本人に頼まれた予定を登録する。自分で登録した予定だけを変更・削除できる。招待は送らない。予定の登録・変更・削除を頼むときは、本人の依頼であることと、その中身（日時・題名）を依頼文に書くこと。「明日」「来週の火曜」のような言い方はそのまま渡してよい。",
+  "skills": [
+    { "id": "read", "name": "予定を調べる", "description": "期間を指定して、共有されたカレンダーをまたいで予定を調べる。", "examples": ["今日の予定を教えて", "来週の火曜は空いている？"] },
+    { "id": "create", "name": "予定を登録する", "description": "本人に頼まれた予定を登録する。本人の依頼であることが依頼文に無いときや、中身が曖昧なときは聞き返す。", "examples": ["本人の依頼: 明日の 10 時から 1 時間、歯医者の予定を入れて"] },
+    { "id": "change", "name": "予定を変える・消す", "description": "カレンダー係が登録した予定だけを変更・削除する。本人が入れた予定には手を出さない。", "examples": ["本人の依頼: 明日の歯医者を 15 時からに変えて"] }
+  ],
+  "publicUrl": "https://agents.example.test/calendar-keeper/",
+  "allowedCallers": [
+    "system:serviceaccount:fraction-agents:owner",
+    "system:serviceaccount:fraction-agents:claude",
+    "system:serviceaccount:fraction-agents:natsumi"
+  ],
+  "agentDir": "/agent",
+  "dataDir": "/data",
+  "piCommand": ["pi", "--exclude-tools", "attach_image"],
+  "contextWorkspace": {
+    "prepare": ["mkdir", "-p"]
+  }
+}

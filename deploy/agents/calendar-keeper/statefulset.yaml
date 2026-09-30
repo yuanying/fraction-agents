@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: agent
+spec:
+  template:
+    spec:
+      containers:
+        - name: host
+          volumeMounts:
+            - name: config
+              mountPath: /agent/calendar.json
+              subPath: calendar.json
+              readOnly: true
+            # The service account's key (serviceAccountKeyFile in calendar.json). Made by hand, never in git.
+            - name: google
+              mountPath: /var/run/secrets/google
+              readOnly: true
+      volumes:
+        - name: agent-dir
+          configMap:
+            name: calendar-keeper-agent-dir
+        - name: config
+          configMap:
+            name: calendar-keeper-config
+        - name: google
+          secret:
+            secretName: calendar-keeper-google
+            defaultMode: 0440
+            # The pod starts before the key exists; the calendar tools fail until the Secret is made.
+            optional: true

@@ -1,0 +1,9 @@
+{
+  "serviceAccountKeyFile": "/var/run/secrets/google/service-account.json",
+  "timeZone": "Asia/Tokyo",
+  "calendars": [
+    { "id": "owner@example.com", "name": "本人" },
+    { "id": "family0123456789@group.calendar.google.com", "name": "家族" }
+  ],
+  "defaultCalendar": "owner@example.com"
+}
