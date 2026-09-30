@@ -1,7 +1,7 @@
 {
   "name": "fraction-agents-pi",
   "version": "0.1.0",
-  "description": "Pi extensions for fraction-agents: a GitHub gate (push, pull request and merge tools, and guards on write, edit and bash), a tool that asks the caller, a tool that returns images to the caller, and web research (search through SearXNG, and a count of unreadable pages).",
+  "description": "Pi extensions for fraction-agents: a GitHub gate (push, pull request and merge tools, and guards on write, edit and bash), a tool that asks the caller, a tool that returns images to the caller, web research (search through SearXNG, and a count of unreadable pages), and Google Calendar (read events, create events, and change or delete only the events it created).",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -11,7 +11,8 @@
       "./extensions/github-gate.ts",
       "./extensions/ask-caller.ts",
       "./extensions/attach-image.ts",
-      "./extensions/web-research.ts"
+      "./extensions/web-research.ts",
+      "./extensions/calendar.ts"
     ]
   },
   "peerDependencies": {

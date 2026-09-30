@@ -20,6 +20,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0011. エージェントは StatefulSet で動かし、ボリュームは volumeClaimTemplates で作る](docs/adr/0011-agent-as-statefulset.md)
 - [0012. 画像の成果物は汎用ホストが保存し、URI の artifact で返す](docs/adr/0012-return-images-as-artifacts-by-uri.md)
 - [0013. 調べもの係（web-researcher）: 検索は SearXNG、読めないときだけ headless Chrome](docs/adr/0013-web-researcher.md)
+- [0014. カレンダー係（calendar-keeper）: サービスアカウントで共有されたカレンダーを読み、自分の予定だけを変える](docs/adr/0014-calendar-keeper.md)
 
 ## 汎用ホスト
 
@@ -327,6 +328,7 @@ image の `/opt/fraction-agents/pi-package` に入り、エージェントは se
 | `ask-caller` | 呼び出し元に質問するツール `ask_caller`。汎用ホストの「聞き返し」で `INPUT_REQUIRED` になる |
 | `attach-image` | 返事に画像を添えるツール `attach_image`。汎用ホストの「画像の成果物」になる。ホストの外（`FRACTION_AGENTS_ARTIFACT_OUTBOX` が無いとき）では出ない |
 | `web-research` | SearXNG で検索するツール `searxng_search`、読めなかったページを記録する `report_unreadable`、ほかの検索の道具の遮断、タスクごとの読めなかった数のログ（ADR 0013）。agentDir に `web-research.json` があるときだけ働く。詳しくは `agents/web-researcher/README.md` |
+| `calendar` | Google Calendar の予定を調べ、登録し、自分で登録した予定だけを変更・削除する道具（ADR 0014）。招待はしない。agentDir に `calendar.json` があるときだけ働く。詳しくは `agents/calendar-keeper/README.md` |
 
 ### 画像を添える
 
@@ -429,6 +431,12 @@ pi は起動するので、`ask_caller` とログインは使える。エージ�
 検索は SearXNG、ページの取得は Pi のパッケージ、読めないときと操作・スクリーンショットだけ headless の Chromium を使う。
 Chromium の入った別の image（`ghcr.io/yuanying/fraction-agents-web-researcher`）で動く。詳しくは `agents/web-researcher/README.md`。
 
+## カレンダー係
+
+`agents/calendar-keeper/` に、カレンダー係の agentDir の中身の雛形と、汎用ホストの設定の例を置く（ADR 0014）。
+本人が共有した Google Calendar をサービスアカウントで読み、本人に頼まれた予定を登録する。自分で登録した予定だけを変更・削除でき、招待は送らない。
+汎用ホストの image で動く。本人の GCP での準備と Secret の作り方は `agents/calendar-keeper/README.md`。
+
 ## Kubernetes に置く
 
 manifest は kustomize で組む。このリポジトリには、どの環境でも使える base と、エージェントごとの kustomization を置く。
@@ -479,6 +487,14 @@ Pod の中のパス:
 - image が amd64 だけなので、`kubernetes.io/arch: amd64` のノードに置く。
 - Chromium のために、メモリの requests を 1Gi、limits を 3Gi にする。
 - Secret は無い。SearXNG の URL は `web-research.json` で渡す。
+
+カレンダー係（`deploy/agents/calendar-keeper`）も同じ形で、次が違う。
+
+- 名前は `calendar-keeper`（PVC は `data-calendar-keeper-0`）。ConfigMap は `calendar-keeper-agent-dir`（`AGENTS.md`・`settings.json`）と
+  `calendar-keeper-config`（`config.json`・`calendar.json`）。`calendar.json` は `/agent/calendar.json` に差し込む。
+- image は汎用ホストの `ghcr.io/yuanying/fraction-agents`。
+- Secret `calendar-keeper-google`（キー `service-account.json`）を `/var/run/secrets/google` にマウントする。サービスアカウントの鍵で、手で作る。
+  Secret が無くても Pod は起動する。その間、カレンダーの道具は失敗する。
 
 ### overlay で決めるもの
 
@@ -538,6 +554,16 @@ kubectl create secret generic wiki-keeper-github-app -n fraction-agents \
 - 鍵のキーは `private-key.pem` にする。`github-gate.json` の `app.privateKeyFile` は `/var/run/secrets/github-app/private-key.pem` を指す。
 - Secret が無くても Pod は起動する。その間、push と PR の作成は失敗する。
 - Secret を作った後、または鍵を差し替えた後は Pod を作り直す（`kubectl rollout restart statefulset/wiki-keeper -n fraction-agents`）。
+
+カレンダー係のサービスアカウントの鍵も同じく手で Secret にする。
+
+```bash
+kubectl create secret generic calendar-keeper-google -n fraction-agents \
+  --from-file=service-account.json=/path/to/service-account-key.json
+```
+
+- 鍵のキーは `service-account.json` にする。`calendar.json` の `serviceAccountKeyFile` は `/var/run/secrets/google/service-account.json` を指す。
+- 係は token を取るたびに鍵を読むので、Secret の変更が Pod に届けば（kubelet が同期するまで 1 分ほど）作り直さずに新しい鍵を使う。
 
 ### ChatGPT Plus にログインする
 

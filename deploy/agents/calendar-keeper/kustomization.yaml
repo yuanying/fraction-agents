@@ -1,0 +1,34 @@
+# The calendar keeper (ADR 0014) on the generic host's image. The environment's overlay refers to this directory as a
+# remote base, pinned to a version, and sets the namespace, the image's tag, the StorageClass and the ConfigMap
+# calendar-keeper-config. The Secret calendar-keeper-google (the service account's key) is made by hand.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - ../../../agents/calendar-keeper
+labels:
+  - pairs:
+      app.kubernetes.io/instance: calendar-keeper
+    includeSelectors: true
+patches:
+  - target: {kind: StatefulSet, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: calendar-keeper
+  - target: {kind: Service, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: calendar-keeper
+  - target: {kind: ServiceAccount, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: calendar-keeper
+  - target: {kind: ClusterRoleBinding, name: agent-auth-delegator}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: calendar-keeper-auth-delegator
+  - path: statefulset.yaml
