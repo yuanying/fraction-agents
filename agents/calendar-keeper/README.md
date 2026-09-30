@@ -87,7 +87,7 @@ kubectl create secret generic calendar-keeper-google -n fraction-agents \
   --from-file=service-account.json=/path/to/service-account-key.json
 ```
 
-鍵を差し替えたときは、Pod を作り直さなくても次の token から新しい鍵を使う。
+鍵を差し替えたときは、kubelet が Secret を Pod に同期した後（1 分ほど）、次の token から新しい鍵を使う。待てなければ Pod を作り直す。
 
 ## 環境ごとの値
 
