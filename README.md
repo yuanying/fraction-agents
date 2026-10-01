@@ -472,7 +472,7 @@ Pod の中のパス:
 | `/etc/fraction-agents/config.json` | ConfigMap `wiki-keeper-config` のファイル。読み取り専用 |
 | `/var/run/secrets/github-app/private-key.pem` | Secret `wiki-keeper-github-app`。Secret が無くても Pod は起動する |
 
-- コンテナは image の `node` ユーザー（UID 1000）で動く。PVC は `fsGroup` で書けるようにする。
+- コンテナは image の `node` ユーザー（UID 1000）で動く。PVC は `fsGroup` で書けるようにする（OpenShift は「overlay で決めるもの」を見る）。
   PVC の `agent/` と `data/` は、init container が `node` ユーザーで作る。
 - agentDir のファイルは ConfigMap からファイルごと（subPath）に差し込む。ディレクトリごと差し込むと、agentDir が読み取り専用になり、
   `auth.json` を書けない。subPath の差し込みは ConfigMap の変更を追わないが、ConfigMap の名前に中身の hash が付くので、
@@ -532,6 +532,21 @@ patches:
 - `wiki-keeper-config` の中身。`config.json` の `publicUrl` と `allowedCallers`、`github-gate.json` の全体。
 - Ingress。Service の port 80 に向ける。
 - 呼び出し元の ServiceAccount（`owner`・`claude`・`natsumi` など）。
+- OpenShift の `restricted-v2` SCC で動かすなら、UID の固定を外す。base は `node` ユーザー（UID・GID・`fsGroup` 1000）を固定するが、
+  その値は名前空間の範囲に入らず、Pod が作られない。外すと、SCC が範囲の中の UID と `fsGroup` を割り当てる。
+  調べもの係の image は、その UID でも `HOME` を `/home/node` にし、root グループに書けるようにしてある。
+
+  ```yaml
+  patches:
+    - target: {kind: StatefulSet}
+      patch: |-
+        - op: remove
+          path: /spec/template/spec/securityContext/runAsUser
+        - op: remove
+          path: /spec/template/spec/securityContext/runAsGroup
+        - op: remove
+          path: /spec/template/spec/securityContext/fsGroup
+  ```
 
 ### Deployment から移る
 
