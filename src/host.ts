@@ -13,6 +13,7 @@ import { authenticate, type TokenReviewer } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { PiAgentExecutor } from "./executor.ts";
 import { ContextGuardHandler } from "./handler.ts";
+import { Replies } from "./reply.ts";
 import { PiSessions, piEnvironment } from "./sessions.ts";
 import { openStore } from "./store.ts";
 import { ContextWorkspaces } from "./workspace.ts";
@@ -69,6 +70,8 @@ export function createHost(options: HostOptions): Host {
     retentionMs: config.artifactRetentionSeconds * 1000,
   });
   artifacts.discardAll();
+  const replies = new Replies(join(config.dataDir, "replies"));
+  replies.discardAll();
 
   const workspaces = new ContextWorkspaces(config.workDir, config.contextWorkspace);
   const sessions = new PiSessions({
@@ -88,6 +91,7 @@ export function createHost(options: HostOptions): Host {
     sessions,
     sessionsDir,
     artifacts,
+    replies,
     artifactUrl: (id) => new URL(`/artifacts/${id}`, config.publicUrl).href,
     now,
     inputTimeoutMs: config.inputTimeoutSeconds * 1000,
@@ -155,6 +159,7 @@ export function createHost(options: HostOptions): Host {
       await removeWorkspace(context.contextId, context.owner);
       rmSync(join(sessionsDir, context.sessionFile), { force: true });
       artifacts.discard(context.contextId);
+      replies.discard(context.contextId);
       store.contexts.remove(context.contextId);
       console.log(`context ${context.contextId}: deleted after the retention period`);
     }

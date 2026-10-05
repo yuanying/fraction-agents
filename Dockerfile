@@ -5,6 +5,8 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
+# The checker of the reply contract, which the host shares with the Pi package's submit_reply tool (ADR 0015).
+COPY pi-package/lib/reply.ts ./pi-package/lib/reply.ts
 RUN npm run build
 
 # The generic host: the A2A adapter as PID 1, and pi, which it starts once per context.
@@ -20,6 +22,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist/src ./dist/src
+COPY --from=build /app/dist/pi-package ./dist/pi-package
 # The fraction-agents Pi package (ADR 0008). Agents load it by this path from their settings, so its version is
 # the image's. Its TypeScript runs as is: pi loads the extensions, and node runs the workspace command.
 COPY pi-package/package.json /opt/fraction-agents/pi-package/package.json

@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import { ARTIFACT_OUTBOX_ENV, artifactOutbox } from "./artifacts.ts";
 import { PiRpcProcess, type DialogRequest, type PromptOutcome } from "./pi-rpc.ts";
+import { REPLY_FILE_ENV, replyFile } from "./reply.ts";
 import type { ContextWorkspaces } from "./workspace.ts";
 
 /** The environment variable that tells pi (and the extensions in it) who called. */
@@ -69,7 +70,7 @@ export interface SessionTarget {
 
 export interface PiEnvironmentOptions {
   agentDir: string;
-  /** The host's data directory; the context's artifact outbox is under it. */
+  /** The host's data directory; the context's artifact outbox and reply file are under it. */
   dataDir: string;
   /** Further environment variable names to pass from the host, on top of {@link PI_BASE_ENV}. */
   passEnv: readonly string[];
@@ -89,6 +90,7 @@ export function piEnvironment(options: PiEnvironmentOptions, caller: string, con
   env[CALLER_ENV] = caller;
   env[CONTEXT_ENV] = contextId;
   env[ARTIFACT_OUTBOX_ENV] = artifactOutbox(join(options.dataDir, "artifacts"), contextId);
+  env[REPLY_FILE_ENV] = replyFile(join(options.dataDir, "replies"), contextId);
   return env;
 }
 
