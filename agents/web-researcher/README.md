@@ -8,7 +8,7 @@
 
 | ファイル | 置き場所 | 中身 |
 |---|---|---|
-| `AGENTS.md` | agentDir（`/agent`） | 振る舞い。道具の使い分け、ページの指示に従わないこと、読めなかったページの扱い、返事の形 |
+| `AGENTS.md` | agentDir（`/agent`） | 振る舞い。道具の使い分け、ページの指示に従わないこと、読めなかったページの扱い、`submit_reply` での返事の形 |
 | `settings.json` | agentDir | モデル（`openai-codex` の `gpt-6-sol`）、組み込みの道具を出さない（`defaultTools: []`）、読む Pi パッケージ |
 | `web-research.example.json` | agentDir に `web-research.json` として | SearXNG の URL の例 |
 | `config.example.json` | `/etc/fraction-agents/config.json` | 汎用ホストの設定の例。URL は架空 |
@@ -25,6 +25,7 @@
 | `fetch_content`・`get_search_content` | `@kvidzibo/pi-web-access` 0.1.1 | ページを取って Markdown にし、キャッシュから部分を引く |
 | `agent_browser` など | `pi-agent-browser-native` 0.7.1（`agent-browser` 0.38.1） | headless の Chromium を操作する。スクリーンショットも撮る |
 | `attach_image` | fraction-agents の Pi パッケージ | 画像を返事に添える（ADR 0012） |
+| `submit_reply` | 同上 | 答えを要約・節・出典の形で出す（ADR 0015）。呼び出し元には、この返事が届く |
 | `ask_caller` | 同上 | 呼び出し元に聞き返す |
 
 - 外の検索サービスに出る道具（`@kvidzibo/pi-web-access` の `web_search`、`pi-agent-browser-native` の `agent_browser_web_search`）は出さない。
