@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/yuanying/fraction-agents/main/docs/extensions/reply/v1/reply.schema.json",
+  "title": "fraction-agents reply v1",
+  "description": "The data part an agent returns with a completed task when the caller activates the extension https://github.com/yuanying/fraction-agents/tree/main/docs/extensions/reply/v1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "sections", "sources"],
+  "properties": {
+    "summary": {
+      "description": "The answer in at most three lines.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^[^\\n]*(\\n[^\\n]*){0,2}$"
+    },
+    "sections": {
+      "description": "The details, one section each.",
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "body"],
+        "properties": {
+          "title": {
+            "description": "A short title on one line.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^\\r\\n]+$"
+          },
+          "body": {
+            "description": "The section's text in Markdown.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50000
+          }
+        }
+      }
+    },
+    "sources": {
+      "description": "Where the answer came from.",
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "url"],
+        "properties": {
+          "title": {
+            "description": "The page's title on one line.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "pattern": "^[^\\r\\n]+$"
+          },
+          "url": {
+            "description": "An http or https URL.",
+            "type": "string",
+            "maxLength": 2000,
+            "pattern": "^https?://[^\\s]+$"
+          }
+        }
+      }
+    }
+  }
+}
