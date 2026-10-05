@@ -21,6 +21,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0012. 画像の成果物は汎用ホストが保存し、URI の artifact で返す](docs/adr/0012-return-images-as-artifacts-by-uri.md)
 - [0013. 調べもの係（web-researcher）: 検索は SearXNG、読めないときだけ headless Chrome](docs/adr/0013-web-researcher.md)
 - [0014. カレンダー係（calendar-keeper）: サービスアカウントで共有されたカレンダーを読み、自分の予定だけを変える](docs/adr/0014-calendar-keeper.md)
+- [0015. 返事の取り決めを A2A の拡張にし、submit_reply で受けた返事を DataPart で返す](docs/adr/0015-reply-contract-as-an-a2a-extension.md)
 
 ## 汎用ホスト
 
@@ -41,6 +42,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
   - 設定の `contextWorkspace` があれば、context ごとに `<workDir>/<contextId>` で pi を動かす（下の「context ごとの作業ディレクトリ」）。
 - 1 つの Task は、pi への 1 回の prompt である。
   - 最後の assistant の文を、`response` という名前の artifact として返す。
+    エージェントが `submit_reply` で返事を出したときは、その返事を Markdown にした文を返し、拡張を有効にした呼び出し元には DataPart も付ける（下の「構造のある返事」）。
   - エージェントが画像を添えたときは、その後に画像ごとの artifact を足す（下の「画像の成果物」）。
   - モデルの呼び出しが失敗したら `FAILED`、pi が途中で終了したら `FAILED`、CancelTask で止めたら `CANCELED` になる。
   - 続きの依頼は、同じ contextId で新しいメッセージを送る。
@@ -116,6 +118,7 @@ TokenReview には Pod の ServiceAccount の token（`/var/run/secrets/kubernet
 | `FRACTION_AGENTS_CALLER` | その context の呼び出し元の名前（`system:serviceaccount:<namespace>:<name>`）。Pi の拡張は、これを見て呼び出し元ごとに振る舞いを変えられる |
 | `FRACTION_AGENTS_CONTEXT_ID` | その context の ID。ホストが採番したもの |
 | `FRACTION_AGENTS_ARTIFACT_OUTBOX` | その context の画像の受け渡しの場所（`<dataDir>/artifacts/outbox/<contextId>`）。`attach_image` が使う（下の「画像の成果物」） |
+| `FRACTION_AGENTS_REPLY_FILE` | その context の返事のファイル（`<dataDir>/replies/<contextId>.json`）。`submit_reply` が使う（下の「構造のある返事」） |
 
 ホストの環境に資格（`OPENAI_API_KEY`、`HF_TOKEN` など）があっても、`passEnv` に書かない限り pi には渡らない。
 エージェントに資格を渡すときは、その名前を `passEnv` に書く。
@@ -180,6 +183,28 @@ a2a send -a https://agents.example.test/wiki-keeper/ --task-id <task-id> "index 
 ```bash
 a2a task get -a https://agents.example.test/web-researcher/ <task-id>   # artifact の url を見る
 curl -fsS -H "Authorization: Bearer $(cat ~/.config/fraction-agents/tokens/claude)" -o shot.png <url>
+```
+
+### 構造のある返事
+
+エージェントは、Task の返事を要約・節・出典の形でも返せる（ADR 0015）。形の取り決めは A2A の拡張で、文書と JSON Schema は
+[`docs/extensions/reply/v1/`](docs/extensions/reply/v1/README.md) にある。
+
+- 拡張の URI は `https://github.com/yuanying/fraction-agents/tree/main/docs/extensions/reply/v1`。
+  ホストは、どのエージェントの Agent Card の `capabilities.extensions` にもこれを書く（`required: false`）。
+- Pi の中では、Pi パッケージのツール `submit_reply` で返事を出す（下の「Pi パッケージ」）。
+- Task が完了したとき、返事が出ていれば、`response` の artifact の TextPart はその返事を Markdown にした文になる。
+  - 呼び出し元が要求の `A2A-Extensions` ヘッダでこの拡張を有効にしていれば、2 つ目の part に DataPart（`data` が返事、`mediaType` が `application/json`）を足し、artifact の `extensions` に URI を書く。
+  - `acceptedOutputModes` に `application/json` を書くだけでは有効にならない。
+- 返事が出ていない、または取り決めの形に合わないときは、今までどおり最後の assistant の文だけを返す。合わなかった理由はホストのログに出す。
+- `FAILED` と `CANCELED` で終わった Task の返事は捨て、次の Task に持ち越さない。
+
+`a2a-cli` で拡張を有効にして頼む例（service parameter は `--svc-param` で渡す）:
+
+```bash
+a2a send -a https://agents.example.test/web-researcher/ -o json \
+  --svc-param A2A-Extensions=https://github.com/yuanying/fraction-agents/tree/main/docs/extensions/reply/v1 \
+  "今日の東京の天気"
 ```
 
 ### 起動
@@ -327,6 +352,7 @@ image の `/opt/fraction-agents/pi-package` に入り、エージェントは se
 | `github-gate` | GitHub への書き込みの門番（ADR 0009）。agentDir に `github-gate.json` があるときだけ働く |
 | `ask-caller` | 呼び出し元に質問するツール `ask_caller`。汎用ホストの「聞き返し」で `INPUT_REQUIRED` になる |
 | `attach-image` | 返事に画像を添えるツール `attach_image`。汎用ホストの「画像の成果物」になる。ホストの外（`FRACTION_AGENTS_ARTIFACT_OUTBOX` が無いとき）では出ない |
+| `submit-reply` | 返事を要約・節・出典の形で出すツール `submit_reply`。汎用ホストの「構造のある返事」になる。ホストの外（`FRACTION_AGENTS_REPLY_FILE` が無いとき）では出ない |
 | `web-research` | SearXNG で検索するツール `searxng_search`、読めなかったページを記録する `report_unreadable`、ほかの検索の道具の遮断、タスクごとの読めなかった数のログ（ADR 0013）。agentDir に `web-research.json` があるときだけ働く。詳しくは `agents/web-researcher/README.md` |
 | `calendar` | Google Calendar の予定を調べ、登録し、自分で登録した予定だけを変更・削除する道具（ADR 0014）。招待はしない。agentDir に `calendar.json` があるときだけ働く。詳しくは `agents/calendar-keeper/README.md` |
 
@@ -343,6 +369,21 @@ image の `/opt/fraction-agents/pi-package` に入り、エージェントは se
 - ツールは、その場で形式（中身で PNG・JPEG・WebP を判定）、大きさ（10 MiB まで）、枚数（8 枚まで）を確かめ、だめなら理由をモデルに返す。
 - 呼んだ時点のファイルの中身を写すので、後でファイルを変えても返る画像は変わらない。シンボリックリンクは受け付けない。
 - スクリーンショットは、まずファイルに撮ってから添える。エージェントの AGENTS.md に、いつ添えるかを書いておく。
+
+### 返事を出す
+
+`submit_reply` は、次の引数で呼ぶ。形と上限は `docs/extensions/reply/v1/` の取り決めのとおりである。
+
+| 引数 | 必須 | 意味 |
+|---|---|---|
+| `summary` | 必須 | 答えそのもの。3 行以内、500 文字まで |
+| `sections` | | 詳細の節の並び。各節は 1 行の `title` と Markdown の `body`。省けば空 |
+| `sources` | | 出典の並び。各出典は 1 行の `title` と `http`・`https` の `url`。省けば空 |
+
+- ツールは、要約と題の前後の空白を落としてから取り決めの形かを確かめ、だめなら理由をモデルに返して何も書かない。
+- 2 度呼べば、後の返事で置き換える。
+- 呼び出し元に届くのはこの返事であり、モデルの最後の文ではない。エージェントの AGENTS.md に、返事の書き方を書いておく。
+- 検査のコード（`pi-package/lib/reply.ts`）は、ホストも同じものを使う。
 
 ### GitHub の門番
 
