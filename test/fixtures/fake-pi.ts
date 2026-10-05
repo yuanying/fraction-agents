@@ -2,7 +2,7 @@
 // It remembers the conversation by appending one line per prompt to the session file, so a restarted process
 // on the same file continues the count. Every start is logged to `spawns.log` in the working directory.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { IMAGES } from "./images.ts";
 
@@ -122,6 +122,31 @@ function prompt(message: string): void {
     });
     if (images[1]) settle(assistant("", "error", "model exploded after the pictures"));
     else settle(assistant(`attached:${images[2]}`));
+    return;
+  }
+  // "reply:<json>" hands the JSON over to the host the way the submit_reply tool does, as is (valid or not), then
+  // replies "submitted" (or fails with "reply-then-fail:"). "reply-then-ask:<json>" asks a question in between.
+  const submit = /^reply(-then-fail|-then-ask)?:(.*)$/s.exec(message);
+  if (submit) {
+    const file = process.env.FRACTION_AGENTS_REPLY_FILE;
+    if (!file) {
+      settle(assistant("", "error", "no reply file"));
+      return;
+    }
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, submit[2]!);
+    if (submit[1] === "-then-fail") {
+      settle(assistant("", "error", "model exploded after the reply"));
+      return;
+    }
+    if (submit[1] === "-then-ask") {
+      void (async () => {
+        const answer = await dialog("input", { title: "Which one?" });
+        settle(assistant(`submitted after ${describeAnswer(answer)}`));
+      })();
+      return;
+    }
+    settle(assistant("submitted"));
     return;
   }
   const wait = /^wait:(\d+)$/.exec(message);

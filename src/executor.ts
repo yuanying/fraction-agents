@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import { Role, TaskState, type Message } from "@a2a-js/sdk";
+import { Role, TaskState, type Message, type Part } from "@a2a-js/sdk";
 import { AgentEvent, type AgentExecutor, type ExecutionEventBus, type RequestContext } from "@a2a-js/sdk/server";
 
 import type { Artifacts } from "./artifacts.ts";
+import { REPLY_EXTENSION_URI, renderReply, type Replies } from "./reply.ts";
 import type { PiSessions, PromptRun } from "./sessions.ts";
 import type { ContextRegistry } from "./store.ts";
 
@@ -14,6 +15,8 @@ export interface PiAgentExecutorOptions {
   sessionsDir: string;
   /** The images tasks hand over, and the URL each is served at. */
   artifacts: Artifacts;
+  /** The replies tasks submit in the shape of the reply contract (ADR 0015). */
+  replies: Replies;
   artifactUrl: (id: string) => string;
   now: () => number;
   /** How long a question to the caller stays open before the task fails. */
@@ -31,11 +34,15 @@ interface Waiting {
   run: PromptRun;
   questionId: string;
   timer: NodeJS.Timeout;
+  /** Whether a request of the task (the one that started it, or an answer) activated the reply extension. */
+  structured: boolean;
 }
 
 /**
  * Runs each A2A task as one prompt in its context's pi session and reports the last assistant text as the result,
- * followed by one artifact per image the agent handed over (ADR 0012).
+ * followed by one artifact per image the agent handed over (ADR 0012). When the agent submitted a reply in the shape
+ * of the reply contract, the result's text is that reply written out, and a caller that activated the reply
+ * extension also gets the reply itself as a data part (ADR 0015).
  * When an extension in pi asks a free-form question (`ctx.ui.input`), the task goes to INPUT_REQUIRED with the
  * question; the caller's next message to the same task is the answer, and the same prompt carries on.
  */
@@ -98,7 +105,7 @@ export class PiAgentExecutor implements AgentExecutor {
     }
     console.log(`task ${taskId}: started in context ${contextId} for ${caller}`);
     status(TaskState.TASK_STATE_WORKING);
-    await this.#drive(taskId, contextId, caller, run, bus);
+    await this.#drive(taskId, contextId, caller, run, bus, wantsStructuredReply(request));
   }
 
   /** Delivers the caller's answer to the question the task is paused on, and carries on with the prompt. */
@@ -114,16 +121,23 @@ export class PiAgentExecutor implements AgentExecutor {
     waiting.run.answer(waiting.questionId, textOf(userMessage));
     console.log(`task ${taskId}: answered`);
     publishStatus(bus, taskId, contextId, TaskState.TASK_STATE_WORKING);
-    await this.#drive(taskId, contextId, caller, waiting.run, bus);
+    await this.#drive(taskId, contextId, caller, waiting.run, bus, waiting.structured || wantsStructuredReply(request));
   }
 
   /** Follows the run to its next question or its end, and reports it. */
-  async #drive(taskId: string, contextId: string, caller: string, run: PromptRun, bus: ExecutionEventBus): Promise<void> {
+  async #drive(
+    taskId: string,
+    contextId: string,
+    caller: string,
+    run: PromptRun,
+    bus: ExecutionEventBus,
+    structured: boolean,
+  ): Promise<void> {
     const step = await run.next();
     if (step.kind === "question") {
       const timer = setTimeout(() => this.#giveUp(taskId), this.#options.inputTimeoutMs);
       timer.unref();
-      this.#waiting.set(taskId, { caller, contextId, run, questionId: step.question.id, timer });
+      this.#waiting.set(taskId, { caller, contextId, run, questionId: step.question.id, timer, structured });
       console.log(`task ${taskId}: waiting for the caller's answer`);
       publishStatus(bus, taskId, contextId, TaskState.TASK_STATE_INPUT_REQUIRED, step.question.text);
       return;
@@ -133,7 +147,14 @@ export class PiAgentExecutor implements AgentExecutor {
     console.log(`task ${taskId}: ${outcome.status}`);
 
     switch (outcome.status) {
-      case "completed":
+      case "completed": {
+        const reply = this.#options.replies.take(contextId, taskId);
+        const parts: Part[] = [
+          { content: { $case: "text", value: reply ? renderReply(reply) : outcome.text }, metadata: {}, filename: "", mediaType: "text/plain" },
+        ];
+        if (reply && structured) {
+          parts.push({ content: { $case: "data", value: reply }, metadata: {}, filename: "", mediaType: "application/json" });
+        }
         bus.publish(
           AgentEvent.artifactUpdate({
             taskId,
@@ -142,9 +163,9 @@ export class PiAgentExecutor implements AgentExecutor {
               artifactId: randomUUID(),
               name: "response",
               description: "",
-              parts: [{ content: { $case: "text", value: outcome.text }, metadata: {}, filename: "", mediaType: "text/plain" }],
+              parts,
               metadata: {},
-              extensions: [],
+              extensions: parts.length > 1 ? [REPLY_EXTENSION_URI] : [],
             },
             append: false,
             lastChunk: true,
@@ -179,12 +200,15 @@ export class PiAgentExecutor implements AgentExecutor {
         }
         publishStatus(bus, taskId, contextId, TaskState.TASK_STATE_COMPLETED);
         return;
+      }
       case "failed":
         this.#options.artifacts.discard(contextId);
+        this.#options.replies.discard(contextId);
         publishStatus(bus, taskId, contextId, TaskState.TASK_STATE_FAILED, outcome.error);
         return;
       case "aborted":
         this.#options.artifacts.discard(contextId);
+        this.#options.replies.discard(contextId);
         publishStatus(bus, taskId, contextId, TaskState.TASK_STATE_CANCELED, "The task was canceled.");
         return;
     }
@@ -201,6 +225,7 @@ export class PiAgentExecutor implements AgentExecutor {
     // Waits (for a while) until the prompt has settled, so the context is free again when this returns.
     await Promise.race([drain(waiting.run), new Promise((resolve) => setTimeout(resolve, SETTLE_WAIT_MS).unref())]);
     this.#options.artifacts.discard(waiting.contextId);
+    this.#options.replies.discard(waiting.contextId);
     return waiting;
   }
 
@@ -240,6 +265,17 @@ async function drain(run: PromptRun): Promise<void> {
     if (step.kind === "done") return;
     run.answer(step.question.id, undefined);
   }
+}
+
+/**
+ * Whether the request activates the reply extension. The caller names it in the `A2A-Extensions` service parameter;
+ * the SDK has already dropped the extensions the card does not declare. When it is activated, the request's
+ * context is marked so that the response says it was used.
+ */
+function wantsStructuredReply(request: RequestContext): boolean {
+  if (!request.context.requestedExtensions?.includes(REPLY_EXTENSION_URI)) return false;
+  request.context.addActivatedExtension(REPLY_EXTENSION_URI);
+  return true;
 }
 
 function textOf(message: Message): string {

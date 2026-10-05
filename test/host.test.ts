@@ -8,6 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { A2A_AUDIENCE, type TokenReviewer } from "../src/auth.ts";
 import { parseConfig, type Config } from "../src/config.ts";
 import { createHost, type Host } from "../src/host.ts";
+import { REPLY_EXTENSION_URI } from "../src/reply.ts";
 import { PI_BASE_ENV } from "../src/sessions.ts";
 import { IMAGES } from "./fixtures/images.ts";
 
@@ -64,8 +65,14 @@ async function start(config: Config, now?: () => number): Promise<Running> {
   return { host, url, config };
 }
 
-async function post(url: string, token: string | undefined, method: string, params: Json): Promise<{ status: number; body: Json }> {
-  const headers: Record<string, string> = { "content-type": "application/json", "a2a-version": "1.0" };
+async function post(
+  url: string,
+  token: string | undefined,
+  method: string,
+  params: Json,
+  extraHeaders: Record<string, string> = {},
+): Promise<{ status: number; body: Json; headers: Headers }> {
+  const headers: Record<string, string> = { "content-type": "application/json", "a2a-version": "1.0", ...extraHeaders };
   if (token) headers.authorization = `Bearer ${token}`;
   const response = await fetch(url, {
     method: "POST",
@@ -73,7 +80,7 @@ async function post(url: string, token: string | undefined, method: string, para
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
   const text = await response.text();
-  return { status: response.status, body: text ? JSON.parse(text) : undefined };
+  return { status: response.status, body: text ? JSON.parse(text) : undefined, headers: response.headers };
 }
 
 async function rpc(url: string, token: string, method: string, params: Json): Promise<Json> {
@@ -136,6 +143,16 @@ describe("agent card", () => {
     assert.deepEqual(card.securitySchemes, { bearer: { httpAuthSecurityScheme: { scheme: "Bearer", bearerFormat: "JWT", description: card.securitySchemes.bearer.httpAuthSecurityScheme.description } } });
     // Scopes as a plain list, the form a2a-go (the official a2a-cli) reads.
     assert.deepEqual(card.securityRequirements, [{ schemes: { bearer: [] } }]);
+  });
+
+  it("declares the reply extension, which a caller may use but need not", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const card = await (await fetch(`${url}/.well-known/agent-card.json`)).json();
+    assert.equal(card.capabilities.extensions.length, 1);
+    const [extension] = card.capabilities.extensions;
+    assert.equal(extension.uri, REPLY_EXTENSION_URI);
+    assert.equal(extension.required ?? false, false);
+    assert.ok(extension.description.length > 0);
   });
 
   it("answers the health check without credentials", async () => {
@@ -287,6 +304,7 @@ describe("tasks and contexts", () => {
         "FRACTION_AGENTS_CALLER",
         "FRACTION_AGENTS_CONTEXT_ID",
         "FRACTION_AGENTS_ARTIFACT_OUTBOX",
+        "FRACTION_AGENTS_REPLY_FILE",
         "PATH",
         "HOME",
       ]) {
@@ -298,6 +316,7 @@ describe("tasks and contexts", () => {
         "FRACTION_AGENTS_CALLER",
         "FRACTION_AGENTS_CONTEXT_ID",
         "FRACTION_AGENTS_ARTIFACT_OUTBOX",
+        "FRACTION_AGENTS_REPLY_FILE",
         ...PI_BASE_ENV,
       ]);
       assert.deepEqual(
@@ -797,5 +816,135 @@ describe("image artifacts", () => {
     await host.sweep();
     assert.deepEqual(stored(), [], "the file is deleted");
     assert.equal((await download(url, "owner", id)).status, 404);
+  });
+});
+
+describe("structured replies", () => {
+  const REPLY = {
+    summary: "Tokyo is sunny today.\nTomorrow it rains.",
+    sections: [{ title: "Today", body: "Sunny, 25°C." }],
+    sources: [{ title: "Weather service", url: "https://weather.example/tokyo" }],
+  };
+  const RENDERED = [
+    "Tokyo is sunny today.\nTomorrow it rains.",
+    "## Today\n\nSunny, 25°C.",
+    "## Sources\n\n- [Weather service](https://weather.example/tokyo)",
+  ].join("\n\n");
+  const ACTIVATE = { "a2a-extensions": REPLY_EXTENSION_URI };
+
+  async function sendWith(url: string, text: string, headers: Record<string, string>, extra: Json = {}): Promise<Json> {
+    const { status, body } = await post(
+      url,
+      "owner",
+      "SendMessage",
+      { message: message(text, extra), configuration: { returnImmediately: true } },
+      headers,
+    );
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(body.error, undefined, JSON.stringify(body.error));
+    return body.result.task;
+  }
+
+  function response(task: Json): Json {
+    assert.equal(task.artifacts[0].name, "response");
+    return task.artifacts[0];
+  }
+
+  it("adds the reply as a data part after the text when the caller activates the extension", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await sendWith(url, `reply:${JSON.stringify(REPLY)}`, ACTIVATE);
+    const done = await waitForTask(url, "owner", task.id);
+    assert.equal(done.status.state, "TASK_STATE_COMPLETED");
+    const artifact = response(done);
+    assert.equal(artifact.parts.length, 2);
+    assert.equal(artifact.parts[0].text, RENDERED, "the text is the reply written out, for callers that read text");
+    assert.deepEqual(artifact.parts[1].data, REPLY);
+    assert.equal(artifact.parts[1].mediaType, "application/json");
+    assert.deepEqual(artifact.extensions, [REPLY_EXTENSION_URI]);
+  });
+
+  it("tells a caller that waits for the result that the extension was used", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const { body, headers } = await post(
+      url,
+      "owner",
+      "SendMessage",
+      { message: message(`reply:${JSON.stringify(REPLY)}`) },
+      ACTIVATE,
+    );
+    assert.equal(body.result.task.status.state, "TASK_STATE_COMPLETED");
+    assert.deepEqual(body.result.task.artifacts[0].parts[1].data, REPLY);
+    assert.equal(headers.get("a2a-extensions"), REPLY_EXTENSION_URI);
+  });
+
+  it("returns only the text to a caller that does not activate the extension", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", `reply:${JSON.stringify(REPLY)}`);
+    const artifact = response(await waitForTask(url, "owner", task.id));
+    assert.equal(artifact.parts.length, 1);
+    assert.equal(artifact.parts[0].text, RENDERED);
+    assert.deepEqual(artifact.extensions ?? [], []);
+  });
+
+  it("does not take application/json among the accepted output modes for the extension", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const body = await rpc(url, "owner", "SendMessage", {
+      message: message(`reply:${JSON.stringify(REPLY)}`),
+      configuration: { acceptedOutputModes: ["text/plain", "application/json"] },
+    });
+    assert.equal(body.result.task.artifacts[0].parts.length, 1);
+  });
+
+  it("ignores an extension it does not declare", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await sendWith(url, `reply:${JSON.stringify(REPLY)}`, { "a2a-extensions": "https://example.com/other/v1" });
+    assert.equal(response(await waitForTask(url, "owner", task.id)).parts.length, 1);
+  });
+
+  it("returns the last text alone when the agent submitted no reply", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await sendWith(url, "hello", ACTIVATE);
+    const artifact = response(await waitForTask(url, "owner", task.id));
+    assert.equal(artifact.parts.length, 1);
+    assert.match(artifact.parts[0].text, /^echo:hello/);
+    assert.deepEqual(artifact.extensions ?? [], []);
+  });
+
+  it("falls back to the last text when the submitted reply breaks the contract", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    for (const broken of ["not json", JSON.stringify({ ...REPLY, summary: "1\n2\n3\n4" }), JSON.stringify({ summary: "no lists" })]) {
+      const task = await sendWith(url, `reply:${broken}`, ACTIVATE);
+      const artifact = response(await waitForTask(url, "owner", task.id));
+      assert.equal(artifact.parts.length, 1, broken);
+      assert.equal(artifact.parts[0].text, "submitted");
+    }
+  });
+
+  it("keeps the reply across a question to the caller", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await sendWith(url, `reply-then-ask:${JSON.stringify(REPLY)}`, ACTIVATE);
+    await waitForState(url, "owner", task.id, "TASK_STATE_INPUT_REQUIRED");
+    // The answer comes without the header; the task was started with the extension.
+    await answer(url, "owner", task, "the first");
+    const artifact = response(await waitForTask(url, "owner", task.id));
+    assert.deepEqual(artifact.parts[1].data, REPLY);
+  });
+
+  it("drops the reply of a task that did not complete", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const failed = await sendWith(url, `reply-then-fail:${JSON.stringify(REPLY)}`, ACTIVATE);
+    assert.equal((await waitForTask(url, "owner", failed.id)).status.state, "TASK_STATE_FAILED");
+    const next = await sendWith(url, "hello", ACTIVATE, { contextId: failed.contextId });
+    const artifact = response(await waitForTask(url, "owner", next.id));
+    assert.equal(artifact.parts.length, 1, "the next task does not pick it up");
+    assert.match(artifact.parts[0].text, /^echo:hello/);
+  });
+
+  it("hands a reply to the next task only once", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const first = await sendWith(url, `reply:${JSON.stringify(REPLY)}`, ACTIVATE);
+    assert.equal(response(await waitForTask(url, "owner", first.id)).parts.length, 2);
+    const next = await sendWith(url, "hello", ACTIVATE, { contextId: first.contextId });
+    assert.equal(response(await waitForTask(url, "owner", next.id)).parts.length, 1);
   });
 });
