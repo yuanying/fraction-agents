@@ -9,7 +9,7 @@ Google には、本人がカレンダーを共有したサービスアカウン�
 | ファイル | 置き場所 | 中身 |
 |---|---|---|
 | `AGENTS.md` | agentDir（`/agent`） | 振る舞い。日付の決め方、登録してよいとき（本人の依頼があるときだけ）、自分の予定だけ変えること、返事の形 |
-| `settings.json` | agentDir | モデル（`openai-codex` の `gpt-6-sol`）、組み込みの道具を出さない（`defaultTools: []`）、読む Pi パッケージ |
+| `settings.json` | agentDir | モデル（`openai-codex` の `gpt-6.1-sol`）、組み込みの道具を出さない（`defaultTools: []`）、読む Pi パッケージ |
 | `calendar.example.json` | agentDir に `calendar.json` として | 鍵のパス・タイムゾーン・カレンダーの例。カレンダー ID は架空 |
 | `config.example.json` | `/etc/fraction-agents/config.json` | 汎用ホストの設定の例。Agent Card の説明に、呼び出し元への頼み方を書く。URL は架空 |
 
