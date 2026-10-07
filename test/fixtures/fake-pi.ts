@@ -179,7 +179,13 @@ process.stdin.on("data", (chunk: string) => {
     const respond = (data?: unknown) => emit({ id: command.id, type: "response", command: command.type, success: true, data });
     switch (command.type) {
       case "prompt":
-        respond();
+        // Like an extension command (pi 1.0's built-in /mcp, say): pi handles it itself and starts no run.
+        if ((command.message ?? "").startsWith("/")) {
+          emit({ type: "extension_ui_request", id: `ui-${nextDialog++}`, method: "notify", message: "handled" });
+          respond({ disposition: "handled" });
+          break;
+        }
+        respond({ disposition: "started" });
         prompt(command.message ?? "");
         break;
       case "abort":
