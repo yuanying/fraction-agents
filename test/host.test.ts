@@ -276,6 +276,16 @@ describe("tasks and contexts", () => {
     assert.match(statusText(done), /model exploded/);
   });
 
+  it("fails the task when pi takes the message as a command and starts no run, and lets the context go on", async () => {
+    const { url } = await start(makeConfig(tempDir()));
+    const task = await send(url, "owner", "/mcp");
+    const done = await waitForTask(url, "owner", task.id);
+    assert.equal(done.status.state, "TASK_STATE_FAILED");
+    assert.match(statusText(done), /command/);
+    const next = await send(url, "owner", "hello", { contextId: task.contextId });
+    assert.equal((await waitForTask(url, "owner", next.id)).status.state, "TASK_STATE_COMPLETED");
+  });
+
   it("fails the task when pi exits, and restarts it for the next task", async () => {
     const { url, config } = await start(makeConfig(tempDir()));
     const task = await send(url, "owner", "crash");

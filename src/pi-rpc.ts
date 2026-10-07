@@ -128,7 +128,7 @@ export class PiRpcProcess {
 
   /**
    * Sends a prompt and waits until pi settles (`agent_settled`: no retry, compaction or queued message remains).
-   * The outcome comes from the last assistant message of the run.
+   * The outcome comes from the last assistant message of the run. A prompt pi handles as a command fails at once.
    */
   async prompt(message: string, onQuestion?: (request: DialogRequest) => void): Promise<PromptOutcome> {
     let last: AssistantMessage | undefined;
@@ -143,6 +143,10 @@ export class PiRpcProcess {
     try {
       const response = await this.request({ type: "prompt", message });
       if (!response.success) return { status: "failed", error: response.error ?? "pi refused the prompt" };
+      // An extension command (`/mcp`, say) is handled by pi itself: no run starts, so nothing would settle.
+      if ((response.data as { disposition?: string } | undefined)?.disposition === "handled") {
+        return { status: "failed", error: "pi took the message as a command and did not start a run" };
+      }
       const ended = await Promise.race([settled.then(() => undefined), this.#exited]);
       if (ended !== undefined) return { status: "failed", error: ended };
     } catch (error) {

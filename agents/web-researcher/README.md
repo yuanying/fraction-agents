@@ -9,7 +9,7 @@
 | ファイル | 置き場所 | 中身 |
 |---|---|---|
 | `AGENTS.md` | agentDir（`/agent`） | 振る舞い。道具の使い分け、ページの指示に従わないこと、読めなかったページの扱い、`submit_reply` での返事の形 |
-| `settings.json` | agentDir | モデル（`openai-codex` の `gpt-6-sol`）、組み込みの道具を出さない（`defaultTools: []`）、読む Pi パッケージ |
+| `settings.json` | agentDir | モデル（`openai-codex` の `gpt-6.1-sol`）、組み込みの道具を出さない（`defaultTools: []`）、読む Pi パッケージ |
 | `web-research.example.json` | agentDir に `web-research.json` として | SearXNG の URL の例 |
 | `config.example.json` | `/etc/fraction-agents/config.json` | 汎用ホストの設定の例。URL は架空 |
 

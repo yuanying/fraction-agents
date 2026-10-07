@@ -219,8 +219,8 @@ node dist/src/main.js --config /path/to/config.json
 
 TokenReview を呼ぶので、Kubernetes の Pod の中で動かす前提である。
 
-image は `Dockerfile` で作る。Node 24 の slim に、このホストと `@earendil-works/pi-coding-agent` 0.87.1（`pi` のコマンド）を入れる。
-0.87.1 には、調べもの係が使う `gpt-6-sol` が `openai-codex` の一覧にある（0.87.0 には無い）。Wiki 管理人も同じ image の pi で動くので、あわせて 0.87.1 になる。
+image は `Dockerfile` で作る。Node 24 の slim に、このホストと `@earendil-works/pi-coding-agent` 1.0.4（`pi` のコマンド）を入れる。
+1.0.4 には、3 つの係が使う `gpt-6.1-sol` が `openai-codex` の一覧にある（0.87.1 には無い）。係はみな同じ image の pi で動く。
 fraction-agents の Pi パッケージ（下の「Pi パッケージ」）も `/opt/fraction-agents/pi-package` に入る。
 `node` ユーザーで動き、`/data` と `/agent` をマウント先として用意してある。設定は `/etc/fraction-agents/config.json` に置く。
 
