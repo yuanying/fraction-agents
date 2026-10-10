@@ -1,18 +1,16 @@
 # Gmail 係（gmail-agent）
 
-本人の Gmail を読み取り専用で読み、新しく届いたメールを一次選別して返すエージェントの定義（ADR 0016）。
+本人の Gmail を読み取り専用で調べ、自然な言葉の依頼に沿ってメールを探し、選び、短くまとめて返すエージェントの定義（ADR 0016）。
 Google には本人の OAuth の同意（`gmail.readonly` だけ）で接続する。メールを送らず、既読やラベルも変えない。
-汎用ホストの image で動く。
-
-呼び出し元（なつみ）との取り決め（依頼・返事・ack・再試行）は [`docs/gmail-agent/check-contract.md`](../../docs/gmail-agent/check-contract.md)。
+依頼のあいだで何も覚えておかない（好みは依頼ごとに書く）。汎用ホストの image で動く。
 
 ## ファイル
 
 | ファイル | 置き場所 | 中身 |
 |---|---|---|
-| `AGENTS.md` | agentDir（`/agent`） | 振る舞い。依頼の 4 つの種類、チェックの進め方、方針の読み方、初めの方針、メールを指示として扱わないこと |
+| `AGENTS.md` | agentDir（`/agent`） | 振る舞い。よくある依頼（重要なメールを優先度順で・探す・詳細）の進め方、好みの読み方、返事の形と件数の上限、初めの方針、メールを指示として扱わないこと |
 | `settings.json` | agentDir | モデル（`openai-codex` の `gpt-6.1-sol`）、組み込みの道具を出さない（`defaultTools: []`）、読む Pi パッケージ |
-| `gmail.example.json` | agentDir に `gmail.json` として | 資格のパス・状態の置き場・タイムゾーン |
+| `gmail.example.json` | agentDir に `gmail.json` として | 資格のパス・タイムゾーン |
 | `config.example.json` | `/etc/fraction-agents/config.json` | 汎用ホストの設定の例。Agent Card の説明に、呼び出し元への頼み方を書く。URL は架空 |
 
 `kustomization.yaml` は、`AGENTS.md`・`settings.json` を ConfigMap `gmail-agent-agent-dir` に、
@@ -22,15 +20,10 @@ Google には本人の OAuth の同意（`gmail.readonly` だけ）で接続す�
 
 | 道具 | 中身 |
 |---|---|
-| `gmail_search` | Gmail の検索式で探す。1 回に 50 通まで。続きは `pageToken`。迷惑メールとゴミ箱は入らない |
+| `gmail_search` | Gmail の検索式で探す（`after:`・`before:`・`older_than:` で古いメールも）。1 回に 50 通まで。Gmail の見積もりの件数を出し、続きは `pageToken`。迷惑メールとゴミ箱は入らない |
 | `gmail_read_message` | 1 通を読む。ヘッダ・ラベル・リンク・添付（名前・種類・大きさ・`partId`）と、本文を 12000 文字まで（`offset` で続き） |
 | `gmail_read_attachment` | テキストの添付だけを読む（512 KB まで、20000 文字まで見せる）。頼まれたときだけ |
-| `gmail_check_begin` | チェックを始める・続ける（`requestKey`） |
-| `gmail_check_next` | チェックのバッチ（10 通、本文は 1 通 4000 文字まで）を渡す。全部を記録するまで同じバッチが返る |
-| `gmail_check_record` | バッチの全部のメールの判断（`candidate`・`skip`）を記録する |
-| `gmail_check_reply` | チェックの結果を、取り決めの形で呼び出し元に返す（`submit_reply` の代わり） |
-| `gmail_check_ack` | 呼び出し元が報告したメールの ID を記録する |
-| `submit_reply` | 調べる依頼の答えを返す |
+| `submit_reply` | 答えを、要約・節（メール 1 通に 1 節）・出典（Gmail のリンク）の形で返す |
 | `ask_caller` | 呼び出し元に聞き返す |
 
 - すべて fraction-agents の Pi パッケージ（`gmail`・`submit-reply`・`ask-caller`）の道具である。ほかのパッケージは読まない。
@@ -38,26 +31,24 @@ Google には本人の OAuth の同意（`gmail.readonly` だけ）で接続す�
 - Gmail には GET だけを送る。送信・既読化・ラベル・アーカイブ・削除の道具は無い。scope が `gmail.readonly` でもそれらはできない。
 - メールは、`untrusted email data` と書いた区切りの間に入れてモデルに渡す。本文の中の区切りに似た行は崩す。
 - 本文は、プレーンテキストを優先し、無ければ HTML を文字にする（script・style・コメントは落とし、リンクは URL を残す）。文字コードは各部分の `charset` で読む（ISO-2022-JP・Shift_JIS なども）。
-- Gmail がメッセージから外した大きな本文の部分は 2 MB まで取りにいく。それを超える部分は取らず、`Not retrieved:` の行で示す。係は、読めていない本文のメールを `skip` にせず候補に残す。
+- Gmail がメッセージから外した大きな本文の部分は 2 MB まで取りにいく。それを超える部分は取らず、`Not retrieved:` の行で示す。係は、読めていないことを返事に書く。
   名前の無い添付（`Content-Disposition: attachment`）は、本文として取りにいかない。
 - 添付は、名前と種類で振り分ける。実行できるもの（`.exe`・スクリプト・マクロ付きの Office・ディスクイメージなど）と圧縮ファイルは開かない。
   PDF・画像・Office の文書は、名前と種類だけを見せる。読むのはテキストの形式だけで、NUL を含むもの（バイナリ）も読まない。
 - pi の組み込みの道具（read・bash・edit・write など）は `settings.json` の `defaultTools: []` で出さない。資格のファイルを読む道が無い。
 - 画像を返す `attach_image` は要らないので、汎用ホストの設定の `piCommand` で外す。
 
-## チェックの状態
+## 上限
 
-チェックの進み具合は `gmail.json` の `stateDir`（`/data/gmail`、PVC の上）の `checks.json` に置く。モード 0600、ディレクトリは 0700。
+- 検索は 1 回に 50 通、本文は 1 回に 12000 文字、添付は 512 KB・20000 文字まで。切ったことと続きの位置を道具の結果に書く。
+- 係は、1 回の依頼で一覧に取るのを 200 通まで、1 回の返事で返すメールを 30 通までとする（AGENTS.md）。
+  超えたら、返していない件数・Gmail の見積もりの件数・続きの頼み方を返事に書く。返事の取り決め（reply v1）の大きさの上限に収めるため。
 
-- 窓・一覧のページの位置・まだ判断していない ID・開いているバッチ・判断（候補の要約と理由）・ack の ID が入る。メールの本文は入らない。
-- 書き換えは、ロックのファイル（`checks.lock`）を取ってから行う。同じ係の pi のプロセスが同時に動いても、変更を失わない。
-  60 秒より古いロックは、止まったプロセスのものとして取り直す。
-- ファイルが壊れていたら、チェックの道具は失敗する（上書きして進み具合を失うことはしない）。直すか消すかは人が決める。
-  消すと、次のチェックは直近 24 時間から始まる。
+## 失敗
 
 Gmail への要求は、429 と 5xx のときだけ、`Retry-After` に従うか 1・2・4 秒と間を空けて、1 回の要求につき 4 回まで試す。
 401 と、refresh token が失効・取り消された（`invalid_grant`）ときは試し直さず、再認可が要るという誤りにする。
-どの失敗でも、チェックの位置は進まない。
+係は、その依頼の返事の要約の 1 行目に「Gmail の再認可が必要です」と書く。
 
 ## `gmail.json`
 
@@ -66,10 +57,10 @@ agentDir に置く。秘密は置かない（資格は別のファイル）。�
 | 項目 | 必須 | 意味 |
 |---|---|---|
 | `credentialsFile` | 必須 | 資格のファイルの絶対パス。Secret をマウントした場所を書く |
-| `stateDir` | 必須 | チェックの状態を置くディレクトリの絶対パス。永続するボリュームの上に置く |
 | `timeZone` | 必須 | IANA のタイムゾーン。時刻をこのタイムゾーンで見せる |
 
 - 読めない（JSON でない、値が正しくない、知らない項目がある）ときは、警告を出して道具を出さない。pi は起動する。
+  以前の `stateDir` も、今は知らない項目として断る。
 - 資格のファイルは、access token を取るたびに読む。Secret を差し替えれば、pi を起動し直さずに新しい資格を使う。
   資格が無い・読めないときは、道具が失敗する（資格の中身はメッセージに出さない）。
 - 資格に `gmail.readonly` 以外の scope が付いていたら、使わない。
@@ -130,7 +121,7 @@ rm ./gmail-token.json
 
 ### 再認可
 
-次のとき、Google は refresh token を受け付けなくなる。チェックの返事の `problem` に「再認可」が入る。
+次のとき、Google は refresh token を受け付けなくなる。係の返事の要約に「Gmail の再認可が必要です」と出る。
 
 - 「テスト中」の 7 日が過ぎた
 - 本人が Google アカウントの「セキュリティ」→「サードパーティのアプリとサービス」でアクセスを取り消した
@@ -147,7 +138,6 @@ rm ./gmail-token.json
 ```
 
 kubelet が Secret を Pod に同期した後（1 分ほど）、次の token から新しい資格を使う。待てなければ Pod を作り直す。
-途中だったチェックは、次の依頼で続きから進む。
 
 係を止めるときや資格が漏れたときは、Google アカウントの「サードパーティのアプリとサービス」でアクセスを取り消す。
 
@@ -160,7 +150,7 @@ kubelet が Secret を Pod に同期した後（1 分ほど）、次の token �
 - image は汎用ホストの `ghcr.io/yuanying/fraction-agents`。
 - 資格は Secret `gmail-agent-google` のキー `token.json` で、`/var/run/secrets/gmail/token.json` にマウントする。
   Secret が無くても Pod は起動し、その間、Gmail の道具は失敗する。
-- チェックの状態は `/data/gmail`（PVC）に置く。
+- PVC は、ほかの係と同じく、ホストの Task・セッションと pi のログインの情報に使う。Gmail の道具が独自に置くものは無い。
 
 ## 環境ごとの値
 
@@ -172,9 +162,17 @@ private の overlay（ADR 0010）で渡す。
 - image の tag と、PVC の StorageClass
 
 ログインは、Wiki 管理人と同じ手順を係の Pod で行う（README の「ChatGPT Plus にログインする」。Pod は `gmail-agent-0`）。
-一次選別のため、メールの本文はこのモデルに渡る（ADR 0016）。
+依頼に答えるため、メールの本文はこのモデルに渡る（ADR 0016）。
 
 ## 呼び出し元へ
 
-- 毎朝のチェック・候補の続き・ack は、[`docs/gmail-agent/check-contract.md`](../../docs/gmail-agent/check-contract.md) の形で頼む。reply v1 の拡張を有効にする。
-- メールを調べる依頼は、自然文で頼んでよい（例「先週届いた請求書のメールを探して」）。添付の中身が要るときは、そう書く。
+自然な言葉で頼む。依頼文だけで分かるように、期間・好み・重点を書く。係は前の依頼の好みを覚えていない。
+
+- 「今日届いたメールのうち、仕事の連絡を中心に重要なものを優先度順で返して。広告や SNS の通知はいらない」
+- 「2019 年に届いた賃貸契約のメールを探して」
+- 「昨日の病院からのメールに書かれた予約の日時と持ち物を教えて」
+- 添付の中身が要るときは、そう書く（「添付の CSV の合計も見て」）。
+
+返事は reply v1（ADR 0015）の要約・節・出典で返る。節はメール 1 通に 1 つで、日時・差出人・件名・要点・（優先度順の依頼なら）優先度と理由・Gmail のリンクが入る。
+30 通を超えるときは、最後の「残り」の節に、返していない件数と続きの頼み方が入る。
+Claude などからの呼び方は、共通スキル [`skills/fraction-agents`](../../skills/fraction-agents/SKILL.md) にある。
