@@ -314,7 +314,8 @@ mkdir -p -m 0700 ~/.config/fraction-agents/tokens
 {
   "tokenFile": "~/.config/fraction-agents/tokens/claude",
   "agents": {
-    "wiki-keeper": { "url": "https://agents.example.test/wiki-keeper/" }
+    "wiki-keeper": { "url": "https://agents.example.test/wiki-keeper/" },
+    "gmail-agent": { "url": "https://agents.example.test/gmail-agent/" }
   }
 }
 ```
@@ -336,6 +337,7 @@ ln -s <このリポジトリ>/skills/fraction-agents ~/.claude/skills/fraction-a
 node skills/fraction-agents/scripts/agent.mjs --list
 node skills/fraction-agents/scripts/agent.mjs wiki-keeper send --async "この記事を取り込んで"
 node skills/fraction-agents/scripts/agent.mjs wiki-keeper task get <task-id> --wait --timeout 5m
+node skills/fraction-agents/scripts/agent.mjs gmail-agent send --async "今日の重要なメールを、仕事の連絡を中心に優先度順で返して"
 ```
 
 - URL と token は、環境変数 `A2ACLI_AGENT_CARD` と `A2ACLI_AUTH` で `a2a` に渡す。コマンド行には出ないので、`ps` やトランスクリプトに token が残らない。
