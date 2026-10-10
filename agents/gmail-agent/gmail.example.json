@@ -1,0 +1,5 @@
+{
+  "credentialsFile": "/var/run/secrets/gmail/token.json",
+  "stateDir": "/data/gmail",
+  "timeZone": "Asia/Tokyo"
+}

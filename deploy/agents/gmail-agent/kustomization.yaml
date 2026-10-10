@@ -1,0 +1,34 @@
+# The Gmail agent (ADR 0016) on the generic host's image. The environment's overlay refers to this directory as a
+# remote base, pinned to a version, and sets the namespace, the image's tag, the StorageClass and the ConfigMap
+# gmail-agent-config. The Secret gmail-agent-google (the owner's OAuth credentials) is made by hand.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - ../../../agents/gmail-agent
+labels:
+  - pairs:
+      app.kubernetes.io/instance: gmail-agent
+    includeSelectors: true
+patches:
+  - target: {kind: StatefulSet, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: gmail-agent
+  - target: {kind: Service, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: gmail-agent
+  - target: {kind: ServiceAccount, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: gmail-agent
+  - target: {kind: ClusterRoleBinding, name: agent-auth-delegator}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: gmail-agent-auth-delegator
+  - path: statefulset.yaml

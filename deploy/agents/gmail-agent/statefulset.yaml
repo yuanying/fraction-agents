@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: agent
+spec:
+  template:
+    spec:
+      containers:
+        - name: host
+          volumeMounts:
+            - name: config
+              mountPath: /agent/gmail.json
+              subPath: gmail.json
+              readOnly: true
+            # The owner's OAuth credentials (credentialsFile in gmail.json), written by gmail-authorize. Made by hand,
+            # never in git. The Gmail tools read it; no tool shows it to the model.
+            - name: google
+              mountPath: /var/run/secrets/gmail
+              readOnly: true
+      volumes:
+        - name: agent-dir
+          configMap:
+            name: gmail-agent-agent-dir
+        - name: config
+          configMap:
+            name: gmail-agent-config
+        - name: google
+          secret:
+            secretName: gmail-agent-google
+            defaultMode: 0440
+            # The pod starts before the credentials exist; the Gmail tools fail until the Secret is made.
+            optional: true
