@@ -67,6 +67,10 @@ COPY images/web-researcher/chromium-policy.json /etc/chromium/policies/managed/w
 # The browser CLI's and its Pi package's settings, in the node user's home (pi gets HOME from the host).
 COPY --chown=node:node images/web-researcher/agent-browser.json /home/node/.agent-browser/config.json
 COPY --chown=node:node images/web-researcher/pi-agent-browser-native.json /home/node/.pi/config/pi-agent-browser-native/config.json
+# A UID other than node's (OpenShift's restricted SCCs pick one from the namespace's range, with GID 0) has no
+# passwd entry, so HOME would be /. Name the home explicitly, and let the root group write it as node can.
+RUN chgrp -R 0 /home/node && chmod -R g=u /home/node
+ENV HOME=/home/node
 WORKDIR /app
 USER node
 
