@@ -191,6 +191,24 @@ describe("Gmail extension", () => {
     assert.match(replied, /"contract"/);
   });
 
+  it("says in the check's reply that the authorization must be renewed, when Google refused it", async () => {
+    google.add(message("m1", "2026-10-10T01:00:00Z"));
+    const { pi, replyFile } = setUp(google);
+    const begun = await pi.call("gmail_check_begin", { requestKey: "daily-2026-10-11" });
+    const checkId = /checkId: (gmc-[\w-]+)/.exec(begun)![1]!;
+    google.refreshTokenValid = false;
+    await assert.rejects(pi.call("gmail_check_next", { checkId }), /authori[sz]e again/i);
+    await pi.call("gmail_check_reply", { checkId });
+    const data = replyData(replyFile);
+    assert.equal(data.status, "scanning");
+    assert.match(data.problem ?? "", /再認可/);
+    // Once Gmail answers again, the note goes.
+    google.refreshTokenValid = true;
+    await pi.call("gmail_check_next", { checkId });
+    await pi.call("gmail_check_reply", { checkId });
+    assert.equal(replyData(replyFile).problem, null);
+  });
+
   it("never shows the credentials, even when Google refuses them", async () => {
     google.refreshTokenValid = false;
     const { pi } = setUp(google);
