@@ -155,6 +155,8 @@ export interface CheckData {
   ackRequired: boolean;
   reportedMessageIds: string[];
   unacknowledgedChecks: string[];
+  /** What went wrong in this request, as the agent noted it (e.g. the authorization must be renewed). */
+  problem: string | null;
 }
 
 export interface GmailChecksOptions {
@@ -323,10 +325,15 @@ export class GmailChecks {
     });
   }
 
-  /** The check's result as a reply in the shape of the reply contract. Reading it marks nothing reported. */
-  async reply(checkId: string, offset = 0): Promise<Reply> {
+  /**
+   * The check's result as a reply in the shape of the reply contract. Reading it marks nothing reported. A problem
+   * (one line) is shown to the caller, but changes nothing of the check.
+   */
+  async reply(checkId: string, offset = 0, problem?: string): Promise<Reply> {
+    const note = (problem ?? "").replace(/\s+/g, " ").trim();
+    if ([...note].length > REASON_LIMIT) throw new Error(`problem is longer than ${REASON_LIMIT} characters; write it shorter.`);
     const state = this.#read();
-    return buildReply(state, find(state, checkId), offset, this.#timeZone);
+    return buildReply(state, find(state, checkId), offset, this.#timeZone, note || null);
   }
 
   /**
@@ -350,7 +357,7 @@ export class GmailChecks {
       check.reportedMessageIds = reported;
       check.status = "acknowledged";
       check.acknowledgedAt ??= now;
-      return buildReply(state, check, 0, this.#timeZone);
+      return buildReply(state, check, 0, this.#timeZone, null);
     });
   }
 
@@ -593,7 +600,7 @@ function candidatesOf(check: StoredCheck): Candidate[] {
     .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] || a.receivedAt.localeCompare(b.receivedAt));
 }
 
-function checkData(state: State, check: StoredCheck, offset: number): CheckData {
+function checkData(state: State, check: StoredCheck, offset: number, problem: string | null): CheckData {
   const all = candidatesOf(check);
   const start = Math.min(Math.max(0, Math.floor(offset)), all.length);
   const data: CheckData = {
@@ -610,6 +617,7 @@ function checkData(state: State, check: StoredCheck, offset: number): CheckData 
     ackRequired: check.status === "complete",
     reportedMessageIds: [...(check.reportedMessageIds ?? [])],
     unacknowledgedChecks: state.checks.filter((c) => c.status === "complete" && c.checkId !== check.checkId).map((c) => c.checkId),
+    problem,
   };
   // As many candidates as fit, up to the page's size; the rest are a call with nextOffset away. Measured as it is
   // sent: the indented JSON in its fence (with this page's nextOffset), counted in code points as the contract counts.
@@ -631,8 +639,8 @@ function dataSection(data: CheckData): string {
   return `\`\`\`json\n${JSON.stringify(data, null, 1)}\n\`\`\``;
 }
 
-function buildReply(state: State, check: StoredCheck, offset: number, timeZone: string): Reply {
-  const data = checkData(state, check, offset);
+function buildReply(state: State, check: StoredCheck, offset: number, timeZone: string, problem: string | null): Reply {
+  const data = checkData(state, check, offset, problem);
   const c = data.counts;
   const more = data.nextOffset === null ? "" : ` この返事は候補 ${data.offset + 1}〜${data.nextOffset} 件目。続きは offset ${data.nextOffset} で依頼してください。`;
   let summary: string;
@@ -661,5 +669,5 @@ function buildReply(state: State, check: StoredCheck, offset: number, timeZone: 
     });
   }
   const sources = data.candidates.map((candidate) => ({ title: cut(candidate.subject.replace(/\s+/g, " "), 300), url: candidate.link }));
-  return { summary: cut(summary, 500), sections, sources };
+  return { summary: cut(problem ? `問題: ${problem}\n${summary}` : summary, 500), sections, sources };
 }

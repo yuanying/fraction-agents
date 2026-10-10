@@ -241,9 +241,12 @@ export function createGmail(options: GmailExtensionOptions = {}): (pi: PiApi) =>
       parameters: Type.Object({
         checkId: Type.String({ description: "The check's ID." }),
         offset: Type.Optional(Type.Integer({ description: "The first candidate to include, when the caller asks for the rest. Default 0." })),
+        problem: Type.Optional(
+          Type.String({ description: "Only when this request could not finish the check: what went wrong, in one short Japanese line (e.g. the authorization must be renewed)." }),
+        ),
       }),
-      async execute(_id: string, params: { checkId: string; offset?: number }) {
-        const reply = await checks.reply(params.checkId, params.offset ?? 0);
+      async execute(_id: string, params: { checkId: string; offset?: number; problem?: string }) {
+        const reply = await checks.reply(params.checkId, params.offset ?? 0, params.problem);
         return text(handOver(reply, `Handed over the result of ${params.checkId}.`));
       },
     });

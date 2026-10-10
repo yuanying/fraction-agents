@@ -339,6 +339,18 @@ describe("Gmail checks", () => {
     assert.deepEqual(data(await c.reply(second.checkId)).unacknowledgedChecks, []);
   });
 
+  it("adds a short note of a problem to the reply, without changing the status", async () => {
+    const c = checks(s);
+    const { checkId } = await c.begin();
+    const reply = (await c.reply(checkId, 0, "Gmail の再認可が必要です（invalid_grant）。")) as { summary: string };
+    assert.match(reply.summary, /^問題: Gmail の再認可が必要です/);
+    const result = data(reply);
+    assert.equal(result.status, "scanning");
+    assert.equal(result.problem, "Gmail の再認可が必要です（invalid_grant）。");
+    assert.equal(data(await c.reply(checkId)).problem, null);
+    await assert.rejects(c.reply(checkId, 0, "x".repeat(301)), /300/);
+  });
+
   it("pages the candidates of a large check", async () => {
     for (let i = 0; i < 35; i += 1) google.add(message(`m${String(i).padStart(2, "0")}`, new Date(Date.parse("2026-10-10T01:00:00Z") + i * 60_000).toISOString()));
     const c = checks(s, { batchSize: 20 });
