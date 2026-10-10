@@ -22,6 +22,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0013. 調べもの係（web-researcher）: 検索は SearXNG、読めないときだけ headless Chrome](docs/adr/0013-web-researcher.md)
 - [0014. カレンダー係（calendar-keeper）: サービスアカウントで共有されたカレンダーを読み、自分の予定だけを変える](docs/adr/0014-calendar-keeper.md)
 - [0015. 返事の取り決めを A2A の拡張にし、submit_reply で受けた返事を DataPart で返す](docs/adr/0015-reply-contract-as-an-a2a-extension.md)
+- [0016. Gmail Agent: 本人の OAuth で Gmail を読み取り専用で読み、毎朝の一次選別をなつみに返す](docs/adr/0016-gmail-agent.md)
 
 ## 汎用ホスト
 
