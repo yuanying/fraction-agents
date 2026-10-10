@@ -1,0 +1,21 @@
+{
+  "name": "gmail-agent",
+  "description": "Gmail 係。本人の Gmail を読み取り専用で読む。前回のチェック以降に届いたメールを、依頼に添えられた方針で一次選別し、候補の短い一覧を返す。メールは送らず、既読やラベルも変えない。毎朝のチェックは requestKey と方針を添えて頼み、報告したメールの ID を ack で返すこと（取り決めは docs/gmail-agent/check-contract.md）。",
+  "skills": [
+    { "id": "check", "name": "新着メールのチェック", "description": "前回のチェック以降に届いたメールを方針で一次選別し、候補（要約・理由・Gmail のリンク）を返す。候補を受け取っただけでは報告済みにならない。報告した ID を ack で返す。", "examples": ["Gmail チェック\nrequestKey: daily-2026-10-11\n方針:\n- 支払い・締め切り・本人宛ての依頼は重要\n- 広告は報告しない"] },
+    { "id": "ack", "name": "チェックの ack", "description": "完了したチェックで本人に報告したメールの ID を記録する。報告が無ければ「なし」。", "examples": ["Gmail チェックの ack\ncheckId: gmc-20261010-2300-a1b2c3\nreportedMessageIds: 18c0ffee0001, 18c0ffee0002"] },
+    { "id": "search", "name": "メールを調べる", "description": "Gmail を検索し、メールの中身を短くまとめて答える。添付の中身は頼まれたときだけ、テキストのものだけ読む。", "examples": ["先週届いた請求書のメールを探して"] }
+  ],
+  "publicUrl": "https://agents.example.test/gmail-agent/",
+  "allowedCallers": [
+    "system:serviceaccount:fraction-agents:owner",
+    "system:serviceaccount:fraction-agents:claude",
+    "system:serviceaccount:fraction-agents:natsumi"
+  ],
+  "agentDir": "/agent",
+  "dataDir": "/data",
+  "piCommand": ["pi", "--exclude-tools", "attach_image"],
+  "contextWorkspace": {
+    "prepare": ["mkdir", "-p"]
+  }
+}

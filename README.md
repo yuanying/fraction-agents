@@ -356,6 +356,7 @@ image の `/opt/fraction-agents/pi-package` に入り、エージェントは se
 | `submit-reply` | 返事を要約・節・出典の形で出すツール `submit_reply`。汎用ホストの「構造のある返事」になる。ホストの外（`FRACTION_AGENTS_REPLY_FILE` が無いとき）では出ない |
 | `web-research` | SearXNG で検索するツール `searxng_search`、読めなかったページを記録する `report_unreadable`、ほかの検索の道具の遮断、タスクごとの読めなかった数のログ（ADR 0013）。agentDir に `web-research.json` があるときだけ働く。詳しくは `agents/web-researcher/README.md` |
 | `calendar` | Google Calendar の予定を調べ、登録し、自分で登録した予定だけを変更・削除する道具（ADR 0014）。招待はしない。agentDir に `calendar.json` があるときだけ働く。詳しくは `agents/calendar-keeper/README.md` |
+| `gmail` | Gmail を読み取り専用で検索・読む道具と、新着メールのチェック（バッチごとの判断・結果・ack）の道具（ADR 0016）。agentDir に `gmail.json` があるときだけ働く。本人の認可のコマンドは `bin/gmail-authorize.ts`。詳しくは `agents/gmail-agent/README.md` |
 
 ### 画像を添える
 
@@ -479,6 +480,14 @@ Chromium の入った別の image（`ghcr.io/yuanying/fraction-agents-web-resear
 本人が共有した Google Calendar をサービスアカウントで読み、本人に頼まれた予定を登録する。自分で登録した予定だけを変更・削除でき、招待は送らない。
 汎用ホストの image で動く。本人の GCP での準備と Secret の作り方は `agents/calendar-keeper/README.md`。
 
+## Gmail 係
+
+`agents/gmail-agent/` に、Gmail 係の agentDir の中身の雛形と、汎用ホストの設定の例を置く（ADR 0016）。
+本人の OAuth の同意（`gmail.readonly` だけ）で Gmail を読み、前回のチェック以降に届いたメールを、依頼に添えられた方針で一次選別して返す。
+メールは送らず、既読やラベルも変えない。汎用ホストの image で動く。
+本人の Google Cloud での準備・認可・再認可と Secret の作り方は `agents/gmail-agent/README.md`、
+呼び出し元との取り決め（依頼・返事・ack・再試行）は `docs/gmail-agent/check-contract.md`。
+
 ## Kubernetes に置く
 
 manifest は kustomize で組む。このリポジトリには、どの環境でも使える base と、エージェントごとの kustomization を置く。
@@ -537,6 +546,15 @@ Pod の中のパス:
 - image は汎用ホストの `ghcr.io/yuanying/fraction-agents`。
 - Secret `calendar-keeper-google`（キー `service-account.json`）を `/var/run/secrets/google` にマウントする。サービスアカウントの鍵で、手で作る。
   Secret が無くても Pod は起動する。その間、カレンダーの道具は失敗する。
+
+Gmail 係（`deploy/agents/gmail-agent`）も同じ形で、次が違う。
+
+- 名前は `gmail-agent`（PVC は `data-gmail-agent-0`）。ConfigMap は `gmail-agent-agent-dir`（`AGENTS.md`・`settings.json`）と
+  `gmail-agent-config`（`config.json`・`gmail.json`）。`gmail.json` は `/agent/gmail.json` に差し込む。
+- image は汎用ホストの `ghcr.io/yuanying/fraction-agents`。
+- Secret `gmail-agent-google`（キー `token.json`）を `/var/run/secrets/gmail` にマウントする。本人の OAuth の資格で、本人が認可して手で作る。
+  Secret が無くても Pod は起動する。その間、Gmail の道具は失敗する。
+- チェックの進み具合は `/data/gmail`（PVC）に置く。
 
 ### overlay で決めるもの
 
@@ -606,6 +624,16 @@ kubectl create secret generic calendar-keeper-google -n fraction-agents \
 
 - 鍵のキーは `service-account.json` にする。`calendar.json` の `serviceAccountKeyFile` は `/var/run/secrets/google/service-account.json` を指す。
 - 係は token を取るたびに鍵を読むので、Secret の変更が Pod に届けば（kubelet が同期するまで 1 分ほど）作り直さずに新しい鍵を使う。
+
+Gmail 係の資格も手で Secret にする。資格のファイルは、本人が `pi-package/bin/gmail-authorize.ts` で作る（手順は `agents/gmail-agent/README.md`）。
+
+```bash
+kubectl create secret generic gmail-agent-google -n fraction-agents \
+  --from-file=token.json=./gmail-token.json
+```
+
+- 資格のキーは `token.json` にする。`gmail.json` の `credentialsFile` は `/var/run/secrets/gmail/token.json` を指す。
+- 係は access token を取るたびに資格を読むので、Secret の変更が Pod に届けば作り直さずに新しい資格を使う。
 
 ### ChatGPT Plus にログインする
 
