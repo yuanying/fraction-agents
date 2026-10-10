@@ -1,7 +1,7 @@
 {
   "name": "fraction-agents-pi",
   "version": "0.1.0",
-  "description": "Pi extensions for fraction-agents: a GitHub gate (push, pull request and merge tools, and guards on write, edit and bash), a tool that asks the caller, a tool that returns images to the caller, a tool that submits the reply as a summary, sections and sources, web research (search through SearXNG, and a count of unreadable pages), Google Calendar (read events, create events, and change or delete only the events it created), and Gmail (read-only search and reading, and checks of newly received mail in batches with an acknowledgement).",
+  "description": "Pi extensions for fraction-agents: a GitHub gate (push, pull request and merge tools, and guards on write, edit and bash), a tool that asks the caller, a tool that returns images to the caller, a tool that submits the reply as a summary, sections and sources, web research (search through SearXNG, and a count of unreadable pages), Google Calendar (read events, create events, and change or delete only the events it created), and Gmail (read-only search and reading of messages, and of text attachments when asked).",
   "private": true,
   "type": "module",
   "license": "MIT",

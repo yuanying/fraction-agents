@@ -130,6 +130,14 @@ export function message(
   };
 }
 
+/** `after:` or `before:` of a query in seconds: epoch seconds, or a date as YYYY/MM/DD (taken as UTC here). */
+function searchTime(q: string, operator: "after" | "before"): number | undefined {
+  const value = new RegExp(`(?:^|\\s)${operator}:(\\S+)`).exec(q)?.[1];
+  if (!value) return undefined;
+  const date = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(value);
+  return date ? Date.UTC(Number(date[1]), Number(date[2]) - 1, Number(date[3])) / 1000 : Number(value);
+}
+
 export class FakeGoogle {
   server!: Server;
   base = "";
@@ -143,8 +151,6 @@ export class FakeGoogle {
   tokensIssued = 0;
   /** The authorization codes the token endpoint accepts, with the PKCE challenge they were issued for. */
   codes = new Map<string, { challenge: string; redirectUri: string }>();
-  /** Page tokens the list endpoint refuses, once each. */
-  expiredPageTokens = new Set<string>();
 
   async start(): Promise<void> {
     this.server = createServer((req, res) => {
@@ -182,7 +188,6 @@ export class FakeGoogle {
     this.refreshTokenValid = true;
     this.tokensIssued = 0;
     this.codes = new Map();
-    this.expiredPageTokens = new Set();
   }
 
   add(...messages: FakeMessage[]): void {
@@ -228,10 +233,9 @@ export class FakeGoogle {
   private list(url: URL): [number, unknown] {
     const q = url.searchParams.get("q") ?? "";
     const pageToken = url.searchParams.get("pageToken");
-    if (pageToken && this.expiredPageTokens.delete(pageToken)) return [400, { error: { code: 400, message: "Invalid pageToken" } }];
     const max = Number(url.searchParams.get("maxResults") ?? "100");
-    const after = /(?:^|\s)after:(\d+)/.exec(q);
-    const before = /(?:^|\s)before:(\d+)/.exec(q);
+    const after = searchTime(q, "after");
+    const before = searchTime(q, "before");
     const includeSpamTrash = url.searchParams.get("includeSpamTrash") === "true";
     const excluded = [...q.matchAll(/-in:(\w+)/g)].map((m) => m[1]!.toUpperCase());
     const words = q
@@ -241,8 +245,8 @@ export class FakeGoogle {
     const all = [...this.messages.values()]
       .filter((m) => {
         const seconds = Number(m.internalDate) / 1000;
-        if (after && seconds < Number(after[1])) return false;
-        if (before && seconds >= Number(before[1])) return false;
+        if (after !== undefined && seconds < after) return false;
+        if (before !== undefined && seconds >= before) return false;
         if (!includeSpamTrash && (m.labelIds.includes("SPAM") || m.labelIds.includes("TRASH"))) return false;
         for (const label of excluded) {
           const name = label === "DRAFTS" ? "DRAFT" : label;
