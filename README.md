@@ -314,7 +314,8 @@ mkdir -p -m 0700 ~/.config/fraction-agents/tokens
 {
   "tokenFile": "~/.config/fraction-agents/tokens/claude",
   "agents": {
-    "wiki-keeper": { "url": "https://agents.example.test/wiki-keeper/" }
+    "wiki-keeper": { "url": "https://agents.example.test/wiki-keeper/" },
+    "gmail-agent": { "url": "https://agents.example.test/gmail-agent/" }
   }
 }
 ```
@@ -336,6 +337,7 @@ ln -s <このリポジトリ>/skills/fraction-agents ~/.claude/skills/fraction-a
 node skills/fraction-agents/scripts/agent.mjs --list
 node skills/fraction-agents/scripts/agent.mjs wiki-keeper send --async "この記事を取り込んで"
 node skills/fraction-agents/scripts/agent.mjs wiki-keeper task get <task-id> --wait --timeout 5m
+node skills/fraction-agents/scripts/agent.mjs gmail-agent send --async "今日の重要なメールを、仕事の連絡を中心に優先度順で返して"
 ```
 
 - URL と token は、環境変数 `A2ACLI_AGENT_CARD` と `A2ACLI_AUTH` で `a2a` に渡す。コマンド行には出ないので、`ps` やトランスクリプトに token が残らない。
@@ -356,7 +358,7 @@ image の `/opt/fraction-agents/pi-package` に入り、エージェントは se
 | `submit-reply` | 返事を要約・節・出典の形で出すツール `submit_reply`。汎用ホストの「構造のある返事」になる。ホストの外（`FRACTION_AGENTS_REPLY_FILE` が無いとき）では出ない |
 | `web-research` | SearXNG で検索するツール `searxng_search`、読めなかったページを記録する `report_unreadable`、ほかの検索の道具の遮断、タスクごとの読めなかった数のログ（ADR 0013）。agentDir に `web-research.json` があるときだけ働く。詳しくは `agents/web-researcher/README.md` |
 | `calendar` | Google Calendar の予定を調べ、登録し、自分で登録した予定だけを変更・削除する道具（ADR 0014）。招待はしない。agentDir に `calendar.json` があるときだけ働く。詳しくは `agents/calendar-keeper/README.md` |
-| `gmail` | Gmail を読み取り専用で検索・読む道具と、新着メールのチェック（バッチごとの判断・結果・ack）の道具（ADR 0016）。agentDir に `gmail.json` があるときだけ働く。本人の認可のコマンドは `bin/gmail-authorize.ts`。詳しくは `agents/gmail-agent/README.md` |
+| `gmail` | Gmail を読み取り専用で検索し、メールと、頼まれたときだけテキストの添付を読む道具（ADR 0016）。agentDir に `gmail.json` があるときだけ働く。本人の認可のコマンドは `bin/gmail-authorize.ts`。詳しくは `agents/gmail-agent/README.md` |
 
 ### 画像を添える
 
@@ -483,10 +485,10 @@ Chromium の入った別の image（`ghcr.io/yuanying/fraction-agents-web-resear
 ## Gmail 係
 
 `agents/gmail-agent/` に、Gmail 係の agentDir の中身の雛形と、汎用ホストの設定の例を置く（ADR 0016）。
-本人の OAuth の同意（`gmail.readonly` だけ）で Gmail を読み、前回のチェック以降に届いたメールを、依頼に添えられた方針で一次選別して返す。
-メールは送らず、既読やラベルも変えない。汎用ホストの image で動く。
-本人の Google Cloud での準備・認可・再認可と Secret の作り方は `agents/gmail-agent/README.md`、
-呼び出し元との取り決め（依頼・返事・ack・再試行）は `docs/gmail-agent/check-contract.md`。
+本人の OAuth の同意（`gmail.readonly` だけ）で Gmail を読み、自然な言葉の依頼に沿ってメールを探し、選び、短くまとめて返す
+（好みや重点を添えて重要なメールを優先度順に、古いメールの検索、特定のメールの詳細）。
+メールは送らず、既読やラベルも変えない。依頼のあいだで何も覚えておかない。汎用ホストの image で動く。
+本人の Google Cloud での準備・認可・再認可と Secret の作り方、頼み方の例は `agents/gmail-agent/README.md`。
 
 ## Kubernetes に置く
 
@@ -554,7 +556,6 @@ Gmail 係（`deploy/agents/gmail-agent`）も同じ形で、次が違う。
 - image は汎用ホストの `ghcr.io/yuanying/fraction-agents`。
 - Secret `gmail-agent-google`（キー `token.json`）を `/var/run/secrets/gmail` にマウントする。本人の OAuth の資格で、本人が認可して手で作る。
   Secret が無くても Pod は起動する。その間、Gmail の道具は失敗する。
-- チェックの進み具合は `/data/gmail`（PVC）に置く。
 
 ### overlay で決めるもの
 

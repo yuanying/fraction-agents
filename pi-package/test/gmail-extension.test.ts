@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { after, before, beforeEach, describe, it } from "node:test";
 
 import { createGmail } from "../extensions/gmail.ts";
-import type { CheckData } from "../lib/gmail-check.ts";
 import type { PiApi, ToolContext, ToolDefinition } from "../lib/pi.ts";
-import { checkReply } from "../lib/reply.ts";
 import {
   attachmentPart,
   CLIENT_SECRET,
@@ -40,46 +39,29 @@ class FakePi implements PiApi {
   }
 }
 
-function setUp(google: FakeGoogle, options: { replyFile?: boolean; config?: Record<string, unknown> } = {}) {
+function setUp(google: FakeGoogle, options: { config?: Record<string, unknown> } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "gmail-ext-"));
   const agentDir = join(dir, "agent");
   const credentials = writeCredentials(dir);
-  const replyFile = join(dir, "replies", "context.json");
   mkdirSync(agentDir, { recursive: true });
-  writeFileSync(
-    join(agentDir, "gmail.json"),
-    JSON.stringify({ credentialsFile: credentials, stateDir: join(dir, "state"), timeZone: "Asia/Tokyo", ...options.config }),
-  );
+  writeFileSync(join(agentDir, "gmail.json"), JSON.stringify({ credentialsFile: credentials, timeZone: "Asia/Tokyo", ...options.config }));
   const pi = new FakePi();
   const logs: string[] = [];
   createGmail({
-    env: { PI_CODING_AGENT_DIR: agentDir, ...(options.replyFile === false ? {} : { FRACTION_AGENTS_REPLY_FILE: replyFile }) },
+    env: { PI_CODING_AGENT_DIR: agentDir },
     tokenUrl: `${google.base}/token`,
     apiBase: `${google.base}/gmail/v1`,
     now: () => NOW,
     sleep: async () => {},
     log: (line) => logs.push(line),
   })(pi);
-  return { pi, logs, replyFile, agentDir };
+  return { pi, logs, agentDir };
 }
 
-function replyData(file: string): CheckData {
-  const reply = JSON.parse(readFileSync(file, "utf8"));
-  assert.equal(checkReply(reply), undefined);
-  const body = reply.sections.find((s: { title: string }) => s.title === "gmail-check").body as string;
-  return JSON.parse(body.replace(/^```json\n/, "").replace(/\n```$/, ""));
-}
+/** The Gmail agent's instructions, which name the tools it may use. */
+const AGENTS_MD = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "agents", "gmail-agent", "AGENTS.md");
 
-const TOOLS = [
-  "gmail_check_ack",
-  "gmail_check_begin",
-  "gmail_check_next",
-  "gmail_check_record",
-  "gmail_check_reply",
-  "gmail_read_attachment",
-  "gmail_read_message",
-  "gmail_search",
-];
+const TOOLS = ["gmail_read_attachment", "gmail_read_message", "gmail_search"];
 
 describe("Gmail extension", () => {
   const google = new FakeGoogle();
@@ -96,10 +78,18 @@ describe("Gmail extension", () => {
     assert.match(logs.join("\n"), /gmail.*not usable/);
   });
 
-  it("offers reading tools only: nothing that sends, labels, archives or deletes", () => {
+  it("offers reading tools only: nothing that sends, labels, archives or deletes, and no checks", () => {
     const { pi } = setUp(google);
     assert.deepEqual([...pi.tools.keys()].sort(), TOOLS);
-    for (const tool of pi.tools.values()) assert.doesNotMatch(tool.name, /send|modify|label|trash|delete|archive/);
+    for (const tool of pi.tools.values()) assert.doesNotMatch(tool.name, /send|modify|label|trash|delete|archive|check/);
+  });
+
+  it("is told only about the tools it has", () => {
+    const { pi } = setUp(google);
+    const named = new Set([...readFileSync(AGENTS_MD, "utf8").matchAll(/\b(gmail_\w+)/g)].map((m) => m[1]!));
+    assert.ok(named.size > 0);
+    for (const name of named) assert.ok(pi.tools.has(name), `AGENTS.md names ${name}, which is not a tool`);
+    assert.doesNotMatch(readFileSync(AGENTS_MD, "utf8"), /requestKey|checkId|\back\b/);
   });
 
   it("searches, starting with the current time, and says when there are more results", async () => {
@@ -113,6 +103,8 @@ describe("Gmail extension", () => {
     assert.match(result, /^Now: 2026-10-11 \(Sun\) 08:00, time zone Asia\/Tokyo/);
     assert.match(result, /m2 .*Invoice November/s);
     assert.doesNotMatch(result, /Invoice October/);
+    // How many there are, and that only part of them is shown, is never left out.
+    assert.match(result, /Showing 1 message\(s\); Gmail estimates about 2 match/);
     assert.match(result, /pageToken: p1/);
     const rest = await pi.call("gmail_search", { query: "invoice", maxResults: 1, pageToken: "p1" });
     assert.match(rest, /Invoice October/);
@@ -145,6 +137,8 @@ describe("Gmail extension", () => {
     const { pi } = setUp(google);
     const listed = await pi.call("gmail_read_message", { messageId: "m1" });
     assert.match(listed, /notes\.txt .*partId: 1/);
+    // Reading the message names the attachments; only gmail_read_attachment, when asked, opens one.
+    assert.equal(google.apiRequests().filter((r) => r.url.pathname.includes("/attachments/")).length, 0);
     assert.match(listed, /setup\.exe .*executable/);
     const notes = await pi.call("gmail_read_attachment", { messageId: "m1", partId: "1" });
     assert.match(notes, /hello notes/);
@@ -153,60 +147,43 @@ describe("Gmail extension", () => {
     assert.equal(google.apiRequests().filter((r) => r.url.pathname.includes("att-exe")).length, 0);
   });
 
-  it("runs a check through the tools and hands natsumi the canonical reply and acknowledgement", async () => {
-    google.add(message("m1", "2026-10-10T01:00:00Z", { subject: "Bill" }), message("m2", "2026-10-10T02:00:00Z"));
-    const { pi, replyFile } = setUp(google);
-    const begun = await pi.call("gmail_check_begin", { requestKey: "daily-2026-10-11" });
-    const checkId = /checkId: (gmc-[\w-]+)/.exec(begun)![1]!;
-    const next = await pi.call("gmail_check_next", { checkId });
-    assert.match(next, /untrusted/);
-    // A message whose body was not read, or was cut where it matters, is not skipped as if it had been read.
-    assert.match(next, /not retrieved.*candidate/i);
-    const batchId = /batchId: (\S+)/.exec(next)![1]!;
-    const recorded = await pi.call("gmail_check_record", {
-      checkId,
-      batchId,
-      decisions: [
-        { messageId: "m1", verdict: "candidate", priority: "high", summary: "A bill is due.", reason: "Payment by Friday." },
-        { messageId: "m2", verdict: "skip", reason: "newsletter" },
-      ],
-    });
-    assert.match(recorded, /complete/i);
-    const replied = await pi.call("gmail_check_reply", { checkId });
-    assert.match(replied, /End with one short line/);
-    const data = replyData(replyFile);
-    assert.equal(data.status, "complete");
-    assert.equal(data.candidates[0]!.subject, "Bill");
-    const acked = await pi.call("gmail_check_ack", { checkId, reportedMessageIds: ["m1"] });
-    assert.match(acked, /acknowledged/i);
-    assert.deepEqual(replyData(replyFile).reportedMessageIds, ["m1"]);
+  it("searches old mail with the dates in the query, as Gmail does", async () => {
+    google.add(
+      message("old", "2019-06-01T03:00:00Z", { subject: "Lease contract" }),
+      message("new", "2026-10-01T03:00:00Z", { subject: "Lease renewal" }),
+    );
+    const { pi } = setUp(google);
+    const result = await pi.call("gmail_search", { query: "lease after:2019/01/01 before:2020/01/01" });
+    assert.match(result, /old .*2019-06-01.*Lease contract/s);
+    assert.doesNotMatch(result, /Lease renewal/);
+    const list = google.apiRequests().find((r) => r.url.pathname.endsWith("/messages"));
+    assert.equal(list?.url.searchParams.get("q"), "lease after:2019/01/01 before:2020/01/01");
+    assert.match(pi.tools.get("gmail_search")!.description, /older_than/);
   });
 
-  it("returns the check's reply as text where there is no host to hand it to", async () => {
-    const { pi } = setUp(google, { replyFile: false });
-    const begun = await pi.call("gmail_check_begin", {});
-    const checkId = /checkId: (gmc-[\w-]+)/.exec(begun)![1]!;
-    await pi.call("gmail_check_next", { checkId });
-    const replied = await pi.call("gmail_check_reply", { checkId });
-    assert.match(replied, /"contract"/);
+  it("reads one message in full for the details: headers, labels, link and attachments by name", async () => {
+    google.add(
+      message("m1", "2026-10-10T01:00:00Z", {
+        from: "Clinic <desk@clinic.example.test>",
+        subject: "Appointment",
+        labels: ["INBOX", "IMPORTANT"],
+        payload: multipart("multipart/mixed", [textPart("Your appointment is on Monday."), attachmentPart("map.pdf", "application/pdf", "att-map", 900)]),
+      }),
+    );
+    const { pi } = setUp(google);
+    const result = await pi.call("gmail_read_message", { messageId: "m1" });
+    assert.match(result, /From: Clinic <desk@clinic\.example\.test>/);
+    assert.match(result, /Labels: INBOX, IMPORTANT/);
+    assert.match(result, /Link: https:\/\/mail\.google\.com\/mail\/\?authuser=owner%40example\.test#all\/m1/);
+    assert.match(result, /map\.pdf .*name and type only/);
+    assert.match(result, /appointment is on Monday/);
   });
 
-  it("says in the check's reply that the authorization must be renewed, when Google refused it", async () => {
-    google.add(message("m1", "2026-10-10T01:00:00Z"));
-    const { pi, replyFile } = setUp(google);
-    const begun = await pi.call("gmail_check_begin", { requestKey: "daily-2026-10-11" });
-    const checkId = /checkId: (gmc-[\w-]+)/.exec(begun)![1]!;
-    google.refreshTokenValid = false;
-    await assert.rejects(pi.call("gmail_check_next", { checkId }), /authori[sz]e again/i);
-    await pi.call("gmail_check_reply", { checkId });
-    const data = replyData(replyFile);
-    assert.equal(data.status, "scanning");
-    assert.match(data.problem ?? "", /再認可/);
-    // Once Gmail answers again, the note goes.
-    google.refreshTokenValid = true;
-    await pi.call("gmail_check_next", { checkId });
-    await pi.call("gmail_check_reply", { checkId });
-    assert.equal(replyData(replyFile).problem, null);
+  it("asks for a new authorization when Gmail answers 401, without retrying", async () => {
+    google.fail(/\/messages$/, 401);
+    const { pi } = setUp(google);
+    await assert.rejects(pi.call("gmail_search", { query: "x" }), /HTTP 401.*authori[sz]e again/i);
+    assert.equal(google.apiRequests().filter((r) => r.url.pathname.endsWith("/messages")).length, 1);
   });
 
   it("never shows the credentials, even when Google refuses them", async () => {

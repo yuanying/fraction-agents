@@ -4,15 +4,12 @@ import { isAbsolute, join } from "node:path";
 import { formatInstant } from "./calendar.ts";
 
 /**
- * The Gmail settings (ADR 0016): where the owner's OAuth credentials are, where the agent keeps the state of its
- * checks, and the time zone it shows times in. The credentials stay in their own file (a Secret); this file holds
- * no secrets.
+ * The Gmail settings (ADR 0016): where the owner's OAuth credentials are, and the time zone it shows times in. The
+ * credentials stay in their own file (a Secret); this file holds no secrets. The agent keeps nothing between requests.
  */
 export interface GmailConfig {
   /** The credentials that gmail-authorize writes: the OAuth client and the owner's refresh token. */
   credentialsFile: string;
-  /** Where the checks' state is kept, on the agent's persistent volume. */
-  stateDir: string;
   /** An IANA time zone such as Asia/Tokyo. */
   timeZone: string;
 }
@@ -37,13 +34,10 @@ export function loadGmailConfig(path: string): GmailConfig {
 export function parseGmailConfig(input: unknown): GmailConfig {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("gmail: the settings must be an object");
   const root = input as Record<string, unknown>;
-  const extra = Object.keys(root).filter((key) => !["credentialsFile", "stateDir", "timeZone"].includes(key));
+  const extra = Object.keys(root).filter((key) => !["credentialsFile", "timeZone"].includes(key));
   if (extra.length > 0) throw new Error(`gmail: unknown settings: ${extra.join(", ")}`);
-  const path = (name: string): string => {
-    const value = root[name];
-    if (typeof value !== "string" || !isAbsolute(value)) throw new Error(`gmail: ${name} must be an absolute path`);
-    return value;
-  };
+  const credentialsFile = root.credentialsFile;
+  if (typeof credentialsFile !== "string" || !isAbsolute(credentialsFile)) throw new Error("gmail: credentialsFile must be an absolute path");
   const timeZone = root.timeZone;
   if (typeof timeZone !== "string" || timeZone === "") throw new Error("gmail: timeZone is required");
   try {
@@ -51,7 +45,7 @@ export function parseGmailConfig(input: unknown): GmailConfig {
   } catch {
     throw new Error(`gmail: timeZone ${timeZone} is not a time zone`);
   }
-  return { credentialsFile: path("credentialsFile"), stateDir: path("stateDir"), timeZone };
+  return { credentialsFile, timeZone };
 }
 
 // --- Credentials -------------------------------------------------------------------------------------------------

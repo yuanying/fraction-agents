@@ -48,19 +48,22 @@ function client(google: FakeGoogle, credentialsFile: string, sleeps: number[] = 
 }
 
 describe("Gmail settings", () => {
-  it("takes the credentials file, the state directory and the time zone", () => {
-    const config = parseGmailConfig({ credentialsFile: "/var/run/secrets/gmail/token.json", stateDir: "/data/gmail", timeZone: "Asia/Tokyo" });
-    assert.deepEqual(config, { credentialsFile: "/var/run/secrets/gmail/token.json", stateDir: "/data/gmail", timeZone: "Asia/Tokyo" });
+  it("takes the credentials file and the time zone", () => {
+    const config = parseGmailConfig({ credentialsFile: "/var/run/secrets/gmail/token.json", timeZone: "Asia/Tokyo" });
+    assert.deepEqual(config, { credentialsFile: "/var/run/secrets/gmail/token.json", timeZone: "Asia/Tokyo" });
   });
 
   it("refuses settings that are missing or wrong", () => {
-    const base = { credentialsFile: "/k.json", stateDir: "/data/gmail", timeZone: "Asia/Tokyo" };
+    const base = { credentialsFile: "/k.json", timeZone: "Asia/Tokyo" };
     assert.throws(() => parseGmailConfig({ ...base, credentialsFile: undefined }), /credentialsFile/);
     assert.throws(() => parseGmailConfig({ ...base, credentialsFile: "token.json" }), /credentialsFile/);
-    assert.throws(() => parseGmailConfig({ ...base, stateDir: "state" }), /stateDir/);
     assert.throws(() => parseGmailConfig({ ...base, timeZone: "Mars/Olympus" }), /timeZone/);
     assert.throws(() => parseGmailConfig({ ...base, extra: 1 }), /extra/);
     assert.throws(() => parseGmailConfig([]), /object/);
+  });
+
+  it("has no state directory any more: the agent keeps nothing between requests", () => {
+    assert.throws(() => parseGmailConfig({ credentialsFile: "/k.json", stateDir: "/data/gmail", timeZone: "Asia/Tokyo" }), /unknown settings: stateDir/);
   });
 });
 
