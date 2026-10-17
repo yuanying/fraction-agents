@@ -5,6 +5,8 @@ import { Role, Task, TaskState, type ListTasksRequest, type ListTasksResponse } 
 import { RequestMalformedError } from "@a2a-js/sdk/errors";
 import { resolveUserScope, type ServerCallContext, type TaskStore } from "@a2a-js/sdk/server";
 
+import { withoutFileBytes as withoutMessageFileBytes } from "./inbox.ts";
+
 const DEFAULT_PAGE_SIZE = 50;
 const UNFINISHED = [TaskState.TASK_STATE_SUBMITTED, TaskState.TASK_STATE_WORKING, TaskState.TASK_STATE_INPUT_REQUIRED];
 
@@ -96,7 +98,7 @@ export class SqliteTaskStore implements TaskStore {
         task.contextId,
         task.status?.state ?? TaskState.TASK_STATE_UNSPECIFIED,
         task.status?.timestamp ?? "",
-        JSON.stringify(Task.toJSON(task)),
+        JSON.stringify(Task.toJSON(withoutFileBytes(task))),
       );
   }
 
@@ -202,6 +204,11 @@ export class SqliteTaskStore implements TaskStore {
       .prepare("UPDATE tasks SET state = ?, status_timestamp = ?, body = ? WHERE owner = ? AND id = ?")
       .run(TaskState.TASK_STATE_FAILED, timestamp, JSON.stringify(Task.toJSON(task)), owner, task.id);
   }
+}
+
+/** The task without the bytes of the files callers sent (ADR 0023). */
+function withoutFileBytes(task: Task): Task {
+  return { ...task, history: task.history.map(withoutMessageFileBytes) };
 }
 
 /** Which caller owns which context, and which session file holds its conversation. */

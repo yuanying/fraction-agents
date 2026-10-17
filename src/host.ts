@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { DefaultRequestHandler, type User } from "@a2a-js/sdk/server";
 import { jsonRpcHandler } from "@a2a-js/sdk/server/express";
-import express, { type Request } from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 
 import { agentCardJson, buildAgentCard } from "./agent-card.ts";
 import { Artifacts } from "./artifacts.ts";
@@ -15,6 +15,7 @@ import type { Config } from "./config.ts";
 import { PiAgentExecutor } from "./executor.ts";
 import { AssertionVerifier, audienceOf } from "./gated-assertion.ts";
 import { ContextGuardHandler } from "./handler.ts";
+import { MAX_REQUEST_BYTES } from "./inbox.ts";
 import { Replies } from "./reply.ts";
 import { renderReportHtml } from "./report-html.ts";
 import { reportWebApp } from "./report-web.ts";
@@ -219,6 +220,23 @@ export function createHost(options: HostOptions): Host {
       res.status(204).end();
     });
   }
+  // Read here, after authentication, with room for the files of a message (ADR 0023): the SDK's own parser stops at
+  // 100 KB, and leaves a body that has been read alone. Its errors are answered the way the SDK answers them.
+  app.use(express.json({ limit: MAX_REQUEST_BYTES }), (error: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (error instanceof SyntaxError && "body" in error) {
+      res.status(400).json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Invalid JSON payload." } });
+      return;
+    }
+    if ((error as { type?: string }).type === "entity.too.large") {
+      res.status(413).json({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32600, message: `The request is over ${MAX_REQUEST_BYTES} bytes, the limit of this agent.` },
+      });
+      return;
+    }
+    next(error);
+  });
   app.use(
     jsonRpcHandler({
       requestHandler,

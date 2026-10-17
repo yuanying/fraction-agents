@@ -1,6 +1,7 @@
 import { join } from "node:path";
 
 import { ARTIFACT_OUTBOX_ENV, artifactOutbox } from "./artifacts.ts";
+import { saveToInbox, type InboundFile } from "./inbox.ts";
 import { PiRpcProcess, type DialogRequest, type PromptOutcome } from "./pi-rpc.ts";
 import { REPLY_FILE_ENV, replyFile } from "./reply.ts";
 import type { ContextWorkspaces } from "./workspace.ts";
@@ -135,9 +136,17 @@ export class PiSessions {
   /**
    * Runs one prompt in the context's pi process. Returns `undefined` at once, without running anything, if another
    * task is running (or waiting to) in the context. The context is the task's from here on; the prompt starts once
-   * `turn` is granted, and settles as aborted without starting when it is not.
+   * `turn` is granted, and settles as aborted without starting when it is not. The files the caller sent are saved in
+   * the context's working directory once the prompt starts and the directory is prepared, and the prompt ends with a
+   * note of where they are (ADR 0023).
    */
-  run(target: SessionTarget, taskId: string, text: string, turn: Promise<boolean> = Promise.resolve(true)): PromptRun | undefined {
+  run(
+    target: SessionTarget,
+    taskId: string,
+    text: string,
+    files: readonly InboundFile[] = [],
+    turn: Promise<boolean> = Promise.resolve(true),
+  ): PromptRun | undefined {
     let entry = this.#entries.get(target.contextId);
     if (entry?.taskId !== undefined) return undefined;
     if (!entry) {
@@ -160,7 +169,11 @@ export class PiSessions {
         current.process = this.#start(target, env);
       }
       run.attach(current.process);
-      return current.process.prompt(text, (question) => run.push({ kind: "question", question }));
+      const prompt =
+        files.length === 0
+          ? text
+          : [text, saveToInbox(this.#options.workspaces.dirOf(target.contextId), files)].filter(Boolean).join("\n\n");
+      return current.process.prompt(prompt, (question) => run.push({ kind: "question", question }));
     };
     const release = () => {
       current.taskId = undefined;
