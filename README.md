@@ -30,6 +30,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0021. 人がレポートを見るページは A2A とは別の listener で出し、gated のアサーションで確かめる](docs/adr/0021-human-report-pages-behind-gated.md)
 - [0022. deep research の係（deep-researcher）: ウェブと public のリポジトリを読み、実行せずにレポートにする](docs/adr/0022-deep-researcher.md)
 - [0023. 呼び出し元が送るファイルは、バイトの part で受け、context の作業ディレクトリの inbox/ に置く](docs/adr/0023-receive-files-into-the-working-directory.md)
+- [0024. Renovate のパッチ等は CI が通れば自動でマージし、Renovate の変更だけなら週に一度リリースする](docs/adr/0024-automerge-and-weekly-release-of-renovate-updates.md)
 
 ## 汎用ホスト
 
@@ -853,3 +854,6 @@ tag `v<版>` を push すると、GitHub Actions が `ghcr.io/yuanying/fraction-
 ニュース係の `ghcr.io/yuanying/fraction-agents-news-agent:<版>`（target `news-agent`）と、
 deep research の係の `ghcr.io/yuanying/fraction-agents-deep-researcher:<版>`（target `deep-researcher`）を build して push する。
 PR では build だけを確かめる。初めて push した package は private で作られるので、GitHub の画面で public にする。
+
+週に一度（月曜 09:00 JST）、前回の `vX.Y.Z` の tag からのコミットが Renovate のものだけで、`.github/` と `renovate.json` のほかに変更があれば、
+`release` のワークフローが image を push してから、次のパッチ版の注釈つきの tag を打つ（ADR 0024）。人のコミットが入っていれば何もしない。

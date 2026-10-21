@@ -1,0 +1,69 @@
+# Once a week, releases the next patch version when every commit since the latest vX.Y.Z tag, merge commits aside,
+# is Renovate's and they changed something outside .github/ and renovate.json (ADR 0024). .github/release/plan.ts
+# decides it and logs why; otherwise the run ends without a release, and the release is left to a tag pushed by hand.
+#
+# The images are pushed by image.yml before the tag is pushed, so a failed push leaves no tag behind.
+# A tag pushed by hand still releases through image.yml as before.
+name: release
+
+on:
+  schedule:
+    - cron: "0 0 * * 1" # Monday 09:00 JST
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      message: ${{ steps.plan.outputs.message }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.21.0
+      - id: plan
+        run: node .github/release/plan.ts
+
+  image:
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+
+  tag:
+    needs: [plan, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      # An annotated tag, as the tags pushed by hand are, on the commit the images were built from: github.sha is the
+      # same in every job of this run.
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          MESSAGE: ${{ needs.plan.outputs.message }}
+        run: |
+          object="$(gh api "repos/$GITHUB_REPOSITORY/git/tags" -f tag="$VERSION" -f message="$MESSAGE" \
+            -f object="$GITHUB_SHA" -f type=commit \
+            -f 'tagger[name]=github-actions[bot]' \
+            -f 'tagger[email]=41898282+github-actions[bot]@users.noreply.github.com' --jq .sha)"
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$VERSION" -f sha="$object"

@@ -6,6 +6,7 @@
   "dependencyDashboard": true,
   "minimumReleaseAge": "7 days",
   "internalChecksFilter": "strict",
+  "platformAutomerge": false,
   "customManagers": [
     {
       "description": "The Node of the images' base is read as a Node release rather than as a Docker tag. A tag such as 24.12.0-bookworm-slim is pushed again each time its Debian layer is rebuilt, so its time is not when that Node came out, and Docker Hub does not always give a time at all; without one, the seven-day wait holds the image back for good while setup-node moves on alone. Read from the Node releases, both carry the same time and so are let through on the same day. The variant after the version is kept as written",
@@ -26,7 +27,7 @@
   ],
   "packageRules": [
     {
-      "description": "The Node the images run (the Dockerfile's base) and the Node the tests run (setup-node in the test workflow) are the same version on purpose: a test passing on one Node says little about another. Grouping them puts both on one branch, so they cannot drift apart one pull request at a time",
+      "description": "The Node the images run (the Dockerfile's base) and the Node the tests run (setup-node in the test workflow, and in the release workflow that decides the weekly release) are the same version on purpose: a test passing on one Node says little about another. Grouping them puts both on one branch, so they cannot drift apart one pull request at a time",
       "matchDepNames": ["node"],
       "matchManagers": ["custom.regex", "github-actions"],
       "groupName": "node"
@@ -47,6 +48,11 @@
       "description": "The images named in the manifests are this repository's own. The manifests are a remote base, and the tag is chosen by the environment's overlay (ADR 0010), so the repository holding that overlay is where Renovate moves it. The kustomizations name them without a tag today, which Renovate already skips; this keeps them out should a tag ever be written here",
       "matchPackageNames": ["ghcr.io/yuanying/fraction-agents", "ghcr.io/yuanying/fraction-agents-*"],
       "enabled": false
+    },
+    {
+      "description": "Patch, digest and pinning updates are merged by Renovate itself once the pull request's checks pass: the test workflow (type check, tests, build, the manifests rendered) and the image workflow (all four images built), which run on every pull request whatever it changes. platformAutomerge is off so that the merge waits for those checks without relying on the repository's auto-merge setting or branch protection. Minor and major updates only open a pull request. What is merged this way reaches a release on its own through the weekly release (ADR 0024)",
+      "matchUpdateTypes": ["patch", "digest", "pin", "pinDigest"],
+      "automerge": true
     },
     {
       "description": "Workflows are already read by the github-actions manager. Grouping them keeps a handful of actions from arriving as a handful of pull requests, since they are updated together and reviewed the same way. The Node of setup-node stays in the node group",
