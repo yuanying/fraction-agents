@@ -31,6 +31,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0022. deep research の係（deep-researcher）: ウェブと public のリポジトリを読み、実行せずにレポートにする](docs/adr/0022-deep-researcher.md)
 - [0023. 呼び出し元が送るファイルは、バイトの part で受け、context の作業ディレクトリの inbox/ に置く](docs/adr/0023-receive-files-into-the-working-directory.md)
 - [0024. Renovate のパッチ等は CI が通れば自動でマージし、Renovate の変更だけなら週に一度リリースする](docs/adr/0024-automerge-and-weekly-release-of-renovate-updates.md)
+- [0025. 設定に挙げた呼び出し元には、機械の口で他の呼び出し元のレポートも読ませる](docs/adr/0025-callers-that-read-every-callers-reports.md)
 
 ## 汎用ホスト
 

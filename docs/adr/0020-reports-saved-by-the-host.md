@@ -1,7 +1,7 @@
 # 0020. 返事をレポートとして汎用ホストが保存し、Markdown と HTML で取らせる
 
 - Date: 2026-10-15
-- Status: Accepted
+- Status: Accepted（「レポートを返すのは持ち主にだけ」は、読むことに限って ADR 0025 で改めた。設定に挙げた呼び出し元は、他の呼び出し元のレポートも取れ、一覧に並ぶ）
 
 ## Context
 
@@ -67,6 +67,7 @@ A2A と同じ listener、同じ認証（ADR 0003）で、次の口を出す。to
 | `DELETE /reports/<ID>` | レポートを消す。消せたら 204 |
 
 - レポートを返す・消すのは、持ち主にだけである。他の呼び出し元と知らない ID には、同じ 404 を返す（ADR 0012 と同じ）。
+  - ADR 0025 で改めた: 設定の `reports.readAllCallers` に挙げた呼び出し元には、他の呼び出し元のレポートも返し、一覧にも並べる。一覧の各要素には持ち主を足した。消すのは今も持ち主にだけである。
 - 応答には `Cache-Control: private, no-store` と `X-Content-Type-Options: nosniff` を付ける。
 - 共通のスキル（`skills/fraction-agents`）に、レポートを取る・一覧を見る・消すコマンド（例 `report get <taskId> --format md|html`、`report list`、`report delete <taskId>`）を足す。足すのはスキルの作業単位で行う。
 
