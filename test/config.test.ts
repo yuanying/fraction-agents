@@ -65,6 +65,31 @@ describe("config", () => {
       assert.throws(() => parseConfig({ ...minimal, reports: true }), /reports/);
     });
 
+    it("takes the callers that may read every caller's reports", () => {
+      const claude = "system:serviceaccount:fraction-agents:claude";
+      const allowedCallers = [...minimal.allowedCallers, claude];
+      assert.deepEqual(parseConfig({ ...minimal, allowedCallers, reports: { readAllCallers: [claude] } }).reports, {
+        dir: "/data/reports",
+        readAllCallers: [claude],
+      });
+      assert.deepEqual(parseConfig({ ...minimal, reports: { readAllCallers: [] } }).reports, {
+        dir: "/data/reports",
+        readAllCallers: [],
+      });
+      assert.throws(
+        () => parseConfig({ ...minimal, allowedCallers, reports: { readAllCallers: "claude" } }),
+        /reports\.readAllCallers must be a list/,
+      );
+      assert.throws(
+        () => parseConfig({ ...minimal, allowedCallers, reports: { readAllCallers: ["claude"] } }),
+        /reports\.readAllCallers must be system:serviceaccount:<namespace>:<name>, got "claude"/,
+      );
+      assert.throws(
+        () => parseConfig({ ...minimal, reports: { readAllCallers: [claude] } }),
+        /reports\.readAllCallers must be in allowedCallers, got "system:serviceaccount:fraction-agents:claude"/,
+      );
+    });
+
     it("takes the listener of the pages for people", () => {
       assert.deepEqual(parseConfig({ ...minimal, reports: { web } }).reports, { dir: "/data/reports", web });
     });

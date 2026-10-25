@@ -40,6 +40,11 @@ export interface ReportsWebConfig {
 export interface ReportsConfig {
   /** Where the reports are kept: a directory of their own, so that it alone can be backed up. */
   dir: string;
+  /**
+   * Callers that may get and list every caller's reports through the endpoints for machines, not just their own
+   * (ADR 0025). Deleting stays with the owner. Each must be one of `allowedCallers`.
+   */
+  readAllCallers?: string[];
   /** When set, the pages for people are served (ADR 0021). */
   web?: ReportsWebConfig;
 }
@@ -106,6 +111,7 @@ export function parseConfig(input: unknown): Config {
   if (!isRecord(input)) throw new Error("config: expected a JSON object");
   const dataDir = absolutePath(input, "dataDir");
   const listenPort = input.port === undefined ? 8080 : port(input.port);
+  const allowedCallers = callers(input.allowedCallers);
   return {
     name: text(input, "name"),
     description: text(input, "description"),
@@ -113,7 +119,7 @@ export function parseConfig(input: unknown): Config {
     skills: skills(input.skills),
     publicUrl: url(input, "publicUrl"),
     port: listenPort,
-    allowedCallers: callers(input.allowedCallers),
+    allowedCallers,
     agentDir: absolutePath(input, "agentDir"),
     dataDir,
     workDir: input.workDir === undefined ? join(dataDir, "work") : absolutePath(input, "workDir"),
@@ -130,7 +136,7 @@ export function parseConfig(input: unknown): Config {
     taskTimeLimitGraceSeconds:
       input.taskTimeLimitGraceSeconds === undefined ? 300 : duration(input, "taskTimeLimitGraceSeconds"),
     ...(input.maxConcurrentTasks === undefined ? {} : { maxConcurrentTasks: count(input.maxConcurrentTasks, "maxConcurrentTasks") }),
-    ...(input.reports === undefined ? {} : { reports: reports(input.reports, dataDir, listenPort) }),
+    ...(input.reports === undefined ? {} : { reports: reports(input.reports, dataDir, listenPort, allowedCallers) }),
   };
 }
 
@@ -171,10 +177,11 @@ function count(value: unknown, field: string): number {
   return value;
 }
 
-function reports(value: unknown, dataDir: string, listenPort: number): ReportsConfig {
+function reports(value: unknown, dataDir: string, listenPort: number, allowedCallers: string[]): ReportsConfig {
   if (!isRecord(value)) throw new Error("config: reports must be an object");
   return {
     dir: value.dir === undefined ? join(dataDir, "reports") : absolutePath(value, "dir", "reports.dir"),
+    ...(value.readAllCallers === undefined ? {} : { readAllCallers: readAllCallers(value.readAllCallers, allowedCallers) }),
     ...(value.web === undefined ? {} : { web: reportsWeb(value.web, listenPort) }),
   };
 }
@@ -213,11 +220,21 @@ function stringList(value: unknown, field: string): string[] {
   return value as string[];
 }
 
-function callers(value: unknown): string[] {
-  const list = stringList(value, "allowedCallers");
+function callers(value: unknown, field = "allowedCallers"): string[] {
+  const list = stringList(value, field);
   const bad = list.find((caller) => !SERVICE_ACCOUNT.test(caller));
   if (bad !== undefined) {
-    throw new Error(`config: allowedCallers must be system:serviceaccount:<namespace>:<name>, got ${JSON.stringify(bad)}`);
+    throw new Error(`config: ${field} must be system:serviceaccount:<namespace>:<name>, got ${JSON.stringify(bad)}`);
+  }
+  return list;
+}
+
+/** Only a caller let in can read anything: one that is not would be a mistake in the config. */
+function readAllCallers(value: unknown, allowedCallers: string[]): string[] {
+  const list = callers(value, "reports.readAllCallers");
+  const stranger = list.find((caller) => !allowedCallers.includes(caller));
+  if (stranger !== undefined) {
+    throw new Error(`config: reports.readAllCallers must be in allowedCallers, got ${JSON.stringify(stranger)}`);
   }
   return list;
 }
