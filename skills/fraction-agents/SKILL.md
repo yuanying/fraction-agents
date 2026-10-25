@@ -230,8 +230,14 @@ agent wiki-keeper task cancel <taskId>
 レポートの ID はその Task の taskId である。Task の記録が保持期間で消えた後も、手で消すまで残る。
 取れる・消せるのは、自分が頼んだレポートだけである。
 
+ただし、係の設定で「すべての呼び出し元のレポートを読める呼び出し元」に挙げられていれば、
+他の呼び出し元（なつみなど）が頼んだレポートも `report get` で取れ、`report list` に並ぶ。
+消せるのは、その場合も自分が頼んだレポートだけである。
+人用のページ（`https://<人用のホスト>/reports/<ID>`）の URL の末尾が taskId なので、ユーザーにページの URL を渡されたら、
+末尾の ID を `report get` に渡す。
+
 ```bash
-agent deep-researcher report list                                       # 自分のレポートの一覧（新しい順）
+agent deep-researcher report list                                       # 取れるレポートの一覧（新しい順）
 agent deep-researcher report list --json                                # 機械で読むとき
 agent deep-researcher report get <taskId>                               # Markdown を標準出力へ
 agent deep-researcher report get <taskId> --format html --output report.html
@@ -239,15 +245,16 @@ agent deep-researcher report delete <taskId>
 ```
 
 - `report` は `a2a` を使わず、`agent.mjs` が係の HTTP の口を直接呼ぶ。URL と token は、ほかのコマンドと同じ設定から引く。
-- 一覧は 1 行に 1 件で、ID・作った時刻・題である。時間の上限で途中までのものには `[partial]` が付く。
+- 一覧は 1 行に 1 件で、ID・作った時刻・持ち主（`<namespace>/<name>`）・題である。時間の上限で途中までのものには `[partial]` が付く。
+  持ち主を返さない古い係では、持ち主の欄は出ない。`--json` では各要素の `owner` に持ち主の ServiceAccount の完全な名前が入る。
 - `get` の既定は Markdown である。`--format html` は目次・表・コードのハイライトの付いた 1 つの HTML になる（Mermaid の図は文のまま）。
   `--output` を付けるとファイルに書き、標準出力には何も出さない。
-- 消すと戻せない。ユーザーに頼まれたときだけ消す。同じ調べものの続きは別のレポートとして並ぶので、古いものを消すのも、ユーザーに確かめてからにする。
+- 消すと戻せない。ユーザーに頼まれたときだけ消す。持ち主が自分でないものは消せない（not found になる）。同じ調べものの続きは別のレポートとして並ぶので、古いものを消すのも、ユーザーに確かめてからにする。
 
 | 終了コード | 意味 |
 |---|---|
 | 0 | できた |
-| 1 | 係が断った。「not found」は、無い ID・消した後・他の呼び出し元のもの・レポートを保存しない係のどれか（区別されない）。401・403 は token の期限切れか、係が自分を受け付けていない（「token の扱い」に従い、ユーザーに伝える） |
+| 1 | 係が断った。「not found」は、無い ID・消した後・他の呼び出し元のもの（`get` では、他の呼び出し元のレポートを読めないとき。`delete` では、読める場合も）・レポートを保存しない係のどれか（区別されない）。401・403 は token の期限切れか、係が自分を受け付けていない（「token の扱い」に従い、ユーザーに伝える） |
 | 2 | 引数の誤り |
 | 3 | 係に届かない |
 

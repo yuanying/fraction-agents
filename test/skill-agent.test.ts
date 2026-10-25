@@ -301,7 +301,8 @@ async function reportServer(
 
 const reportId = "0b6c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d";
 
-// The report endpoints as the host serves them, for one report owned by the caller.
+// The report endpoints as the host serves them, to a caller that may read every caller's reports: one report is its
+// own, the other another caller's.
 function reportEndpoints(req: IncomingMessage, res: ServerResponse): void {
   const path = new URL(req.url ?? "/", "http://x").pathname.replace(/^\/deep-researcher/, "");
   if (req.method === "GET" && path === "/reports") {
@@ -309,8 +310,20 @@ function reportEndpoints(req: IncomingMessage, res: ServerResponse): void {
     res.end(
       JSON.stringify({
         reports: [
-          { id: reportId, title: "Rust の非同期ランタイムの比較", createdAt: "2026-10-15T01:02:03.000Z", partial: true },
-          { id: "1c7d2e3f-4051-4b6c-9d7e-8f9a0b1c2d3e", title: "前の調べもの", createdAt: "2026-10-14T00:00:00.000Z", partial: false },
+          {
+            id: reportId,
+            title: "Rust の非同期ランタイムの比較",
+            createdAt: "2026-10-15T01:02:03.000Z",
+            partial: true,
+            owner: "system:serviceaccount:fraction-agents:claude",
+          },
+          {
+            id: "1c7d2e3f-4051-4b6c-9d7e-8f9a0b1c2d3e",
+            title: "前の調べもの",
+            createdAt: "2026-10-14T00:00:00.000Z",
+            partial: false,
+            owner: "system:serviceaccount:natsumi:natsumi",
+          },
         ],
       }),
     );
@@ -364,11 +377,34 @@ describe("skills/fraction-agents/scripts/agent.mjs report", () => {
       assert.deepEqual(server.seen, [{ method: "GET", url: "/reports", authorization: `Bearer ${token}` }]);
       const lines = result.stdout.trimEnd().split("\n");
       assert.equal(lines.length, 2);
-      assert.match(lines[0]!, new RegExp(`^${reportId}\\s+2026-10-15T01:02:03.000Z\\s+\\[partial\\] Rust の非同期ランタイムの比較$`));
-      assert.match(lines[1]!, /^1c7d2e3f-4051-4b6c-9d7e-8f9a0b1c2d3e\s+2026-10-14T00:00:00.000Z\s+前の調べもの$/);
+      assert.match(
+        lines[0]!,
+        new RegExp(`^${reportId}\\s+2026-10-15T01:02:03.000Z\\s+fraction-agents/claude\\s+\\[partial\\] Rust の非同期ランタイムの比較$`),
+      );
+      assert.match(lines[1]!, /^1c7d2e3f-4051-4b6c-9d7e-8f9a0b1c2d3e\s+2026-10-14T00:00:00.000Z\s+natsumi\/natsumi\s+前の調べもの$/);
       assert.ok(!result.stdout.includes(token));
       assert.ok(!result.stderr.includes(token));
       assert.ok(!invoked(e));
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("lists without the owner when the agent does not say it", async () => {
+    const server = await reportServer((_req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          reports: [{ id: reportId, title: "前の調べもの", createdAt: "2026-10-14T00:00:00.000Z", partial: false }],
+        }),
+      );
+    });
+    try {
+      const e = setup();
+      reportsConfig(e, `${server.base}/`);
+      const result = await runAsync(e, ["deep-researcher", "report", "list"]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, `${reportId}  2026-10-14T00:00:00.000Z  前の調べもの\n`);
     } finally {
       await server.close();
     }

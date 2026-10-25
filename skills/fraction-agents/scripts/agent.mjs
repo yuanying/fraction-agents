@@ -198,6 +198,12 @@ async function request(name, method, url, token) {
   return response;
 }
 
+// The owner as `<namespace>/<name>`: a ServiceAccount's full name is system:serviceaccount:<namespace>:<name>.
+function ownerName(owner) {
+  const match = /^system:serviceaccount:([^:]+):([^:]+)$/.exec(owner);
+  return match ? `${match[1]}/${match[2]}` : owner;
+}
+
 async function report(name, command, config) {
   const agent = findAgent(name, config);
   const token = readToken(name, agent, config);
@@ -219,14 +225,18 @@ async function report(name, command, config) {
       return;
     }
     const reports = Array.isArray(body?.reports) ? body.reports : [];
-    if (reports.length === 0) process.stderr.write(`agent.mjs: agent "${name}" has no reports of yours\n`);
+    if (reports.length === 0) process.stderr.write(`agent.mjs: agent "${name}" has no reports you can read\n`);
     for (const r of reports) {
-      process.stdout.write(`${r.id}  ${r.createdAt}  ${r.partial ? "[partial] " : ""}${r.title}\n`);
+      const owner = typeof r.owner === "string" ? `${ownerName(r.owner)}  ` : "";
+      process.stdout.write(`${r.id}  ${r.createdAt}  ${owner}${r.partial ? "[partial] " : ""}${r.title}\n`);
     }
     return;
   }
 
-  const notFound = `report ${command.id} not found on agent "${name}" (no such task, already deleted, sent by another caller, or the agent does not keep reports)`;
+  const notFound =
+    command.action === "delete"
+      ? `report ${command.id} not found on agent "${name}" (no such task, already deleted, sent by another caller, or the agent does not keep reports)`
+      : `report ${command.id} not found on agent "${name}" (no such task, already deleted, sent by another caller whose reports you may not read, or the agent does not keep reports)`;
   if (command.action === "delete") {
     const response = await request(name, "DELETE", reportUrl(agent, `reports/${command.id}`), token);
     if (response.status === 404) {
