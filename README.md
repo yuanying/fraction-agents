@@ -31,6 +31,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0022. deep research の係（deep-researcher）: ウェブと public のリポジトリを読み、実行せずにレポートにする](docs/adr/0022-deep-researcher.md)
 - [0023. 呼び出し元が送るファイルは、バイトの part で受け、context の作業ディレクトリの inbox/ に置く](docs/adr/0023-receive-files-into-the-working-directory.md)
 - [0024. Renovate のパッチ等は CI が通れば自動でマージし、Renovate の変更だけなら週に一度リリースする](docs/adr/0024-automerge-and-weekly-release-of-renovate-updates.md)
+- [0025. 設定に挙げた呼び出し元には、機械の口で他の呼び出し元のレポートも読ませる](docs/adr/0025-callers-that-read-every-callers-reports.md)
 
 ## 汎用ホスト
 
@@ -89,6 +90,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 | `maxConcurrentTasks` | | なし（上限なし） | 係全体で同時に働く依頼の数。超えた依頼は `SUBMITTED` のまま順番を待つ（下の「同時に働く依頼の数」） |
 | `reports` | | なし | 返事をレポートとして残す（下の「レポート」）。`{}` で有効になる |
 | `reports.dir` | | `<dataDir>/reports` | レポートの置き場。絶対パス。backup はこのディレクトリだけを取ればよい |
+| `reports.readAllCallers` | | なし | 機械の口で、すべての呼び出し元のレポートを取れ・一覧できる呼び出し元の並び。`allowedCallers` と同じく `system:serviceaccount:<namespace>:<name>` で書き、`allowedCallers` に含まれていること。消すのは持ち主だけのまま（下の「レポート」、ADR 0025） |
 | `reports.web` | | なし | 人用のページの listener（下の「人用のページ」）。書くなら次の項目はすべて必須 |
 | `reports.web.port` | 必須 | | 人用の listener のポート。`port` とは別にする |
 | `reports.web.publicUrl` | 必須 | | 人から見た人用のページの URL。返事に足す URL と、アサーションの `aud` と比べるホスト名に使う |
@@ -279,11 +281,13 @@ a2a send -a https://agents.example.test/web-researcher/ -o json \
   - context が保持期間で消えても、レポートは残る。
 
 A2A と同じ listener、同じ token で、次の口を出す。token が無い・違うときは 401、許していない ServiceAccount は 403 である。
-返す・消すのは持ち主にだけで、他の呼び出し元のレポートと知らない ID には 404 を返す。応答には `Cache-Control: private, no-store` と `X-Content-Type-Options: nosniff` を付ける。
+返す・消すのは持ち主にだけで、他の呼び出し元のレポートと知らない ID には 404 を返す。
+ただし `reports.readAllCallers` に挙げた呼び出し元には、他の呼び出し元のレポートも返し、一覧にも並べる（ADR 0025）。その呼び出し元でも、消せるのは自分が持ち主のレポートだけで、他の呼び出し元のレポートの `DELETE` は 404 である。
+応答には `Cache-Control: private, no-store` と `X-Content-Type-Options: nosniff` を付ける。
 
 | 口 | 中身 |
 |---|---|
-| `GET /reports` | 自分が持ち主のレポートの一覧。新しい順で、`reports` の各要素は `id`・`title`・`createdAt`（ISO 8601）・`partial` |
+| `GET /reports` | 自分が持ち主のレポートの一覧（`reports.readAllCallers` に挙げた呼び出し元には、すべての呼び出し元のレポートの一覧）。新しい順で、`reports` の各要素は `id`・`title`・`createdAt`（ISO 8601）・`partial`・`owner`（持ち主の ServiceAccount の完全な名前） |
 | `GET /reports/<ID>.md` | 本文の Markdown（`text/markdown; charset=utf-8`） |
 | `GET /reports/<ID>.html` | 本文を HTML にしたもの |
 | `DELETE /reports/<ID>` | レポートを消す。消せたら 204。Task の記録は残る |
@@ -329,8 +333,9 @@ curl -fsS -X DELETE -H "Authorization: Bearer $TOKEN" https://agents.example.tes
 
 ### レポートのコマンド
 
-他の呼び出し元のレポートを本人が見る・消すときは、係の Pod に `kubectl exec` で入り、image に同梱したコマンドを使う。
+他の呼び出し元のレポートを本人が消すときは、係の Pod に `kubectl exec` で入り、image に同梱したコマンドを使う。
 ホストと同じ設定ファイルを読み、持ち主を問わない。
+他の呼び出し元のレポートを読むだけなら、`reports.readAllCallers` に挙げた呼び出し元から機械の口で取れる（上の「レポート」）。人用のページの URL の末尾（`reports/<ID>`）が、その ID である。
 
 ```bash
 kubectl exec -n fraction-agents deep-researcher-0 -- node /app/dist/src/report-cli.js list
@@ -481,7 +486,7 @@ node skills/fraction-agents/scripts/agent.mjs deep-researcher report get <task-i
   ほかの引数は、そのまま `a2a` に渡る。`a2a` の出力と終了コードも、そのまま返る。
 - `<名前> report list|get|delete` だけは `a2a` を使わず、補助スクリプトが係のレポートの口（ADR 0020）を直接呼ぶ。
   URL はエージェントの URL の下の `reports`（例 `https://agents.example.test/deep-researcher/reports`）で、token は `Authorization` のヘッダにだけ載せる。
-  リダイレクトは追わない（token を別の場所へ送らないため）。404 は「無い・他の呼び出し元のもの・レポートを保存しない係」を区別せずに終了コード 1、
+  リダイレクトは追わない（token を別の場所へ送らないため）。404 は「無い・他の呼び出し元のもの（`get` では、読めない呼び出し元のもの）・レポートを保存しない係」を区別せずに終了コード 1、
   401・403 は token の発行し直しを促して終了コード 1、届かなければ終了コード 3 で返る。使い方はスキルの「レポートを取る」に書いてある。
 - 補助スクリプトのテスト（`test/skill-agent.test.ts`）は `npm test` で走る。本物の `a2a` の代わりに、起動のされ方を記録する偽の `a2a` を使う。
   レポートのコマンドは、テストの中に立てたローカルの HTTP サーバーを係の代わりにする。

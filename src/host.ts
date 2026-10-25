@@ -178,7 +178,15 @@ export function createHost(options: HostOptions): Host {
       .pipe(res);
   });
   if (reports) {
-    // The reports, to the caller that sent the task (ADR 0020). Another's report is the same as none.
+    // The reports, to the caller that sent the task (ADR 0020). Another's report is the same as none, except to a
+    // caller that may read every caller's reports, which gets and lists them all but still deletes its own only
+    // (ADR 0025).
+    const readAll = new Set(config.reports?.readAllCallers ?? []);
+    // Whose reports the caller may read: its own, or every caller's (undefined).
+    const readable = (req: Request) => {
+      const caller = callers.get(req)!;
+      return readAll.has(caller) ? undefined : caller;
+    };
     const reportHeaders = (res: express.Response) => {
       res.setHeader("Cache-Control", "private, no-store");
       res.setHeader("X-Content-Type-Options", "nosniff");
@@ -186,11 +194,12 @@ export function createHost(options: HostOptions): Host {
     app.get("/reports", (req, res) => {
       reportHeaders(res);
       res.json({
-        reports: reports.list(callers.get(req)!).map((record) => ({
+        reports: reports.list(readable(req)).map((record) => ({
           id: record.id,
           title: record.title,
           createdAt: new Date(record.createdAt).toISOString(),
           partial: record.partial,
+          owner: record.owner,
         })),
       });
     });
@@ -201,7 +210,7 @@ export function createHost(options: HostOptions): Host {
         next();
         return;
       }
-      const record = reports.get(match[1]!, callers.get(req)!);
+      const record = reports.get(match[1]!, readable(req));
       const markdown = record ? reports.markdown(record.id, record.owner) : undefined;
       if (!record || markdown === undefined) {
         res.status(404).json({ error: "report not found" });

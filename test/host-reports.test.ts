@@ -9,7 +9,9 @@ import { after, before, describe, it } from "node:test";
 import type { Config } from "../src/config.ts";
 import { REPLY_EXTENSION_URI } from "../src/reply.ts";
 import {
+  CLAUDE,
   makeConfig,
+  OWNER,
   post,
   resultText,
   send,
@@ -91,6 +93,7 @@ describe("reports for machines", () => {
     assert.equal(report.id, done.id);
     assert.equal(report.title, "Rust の async の現状");
     assert.equal(report.partial, false);
+    assert.equal(report.owner, OWNER);
     assert.match(report.createdAt, /^\d{4}-\d{2}-\d{2}T/);
 
     const markdown = await get(`${url}/reports/${done.id}.md`, "owner");
@@ -173,6 +176,58 @@ describe("reports for machines", () => {
     assert.equal(resultText(done), RENDERED);
     assert.notEqual((await get(`${url}/reports`, "owner")).status, 200);
     assert.equal(existsSync(join(config.dataDir, "reports")), false);
+  });
+});
+
+describe("callers that read every caller's reports", () => {
+  it("get and list another caller's reports, with the owner in the list", async () => {
+    const { url } = await start(reportsConfig({ reports: { readAllCallers: [CLAUDE] } }));
+    const others = await research(url, "owner");
+    const own = await research(url, "claude");
+    const list = await get(`${url}/reports`, "claude");
+    assert.equal(list.status, 200);
+    assert.deepEqual(
+      JSON.parse(list.text).reports.map((report: Json) => [report.id, report.owner]),
+      [
+        [own.id, CLAUDE],
+        [others.id, OWNER],
+      ],
+    );
+    const markdown = await get(`${url}/reports/${others.id}.md`, "claude");
+    assert.equal(markdown.status, 200);
+    assert.equal(markdown.text, RENDERED);
+    const html = await get(`${url}/reports/${others.id}.html`, "claude");
+    assert.equal(html.status, 200);
+    assert.match(html.text, /依頼元 owner/);
+  });
+
+  it("cannot delete another caller's report, only their own", async () => {
+    const { url } = await start(reportsConfig({ reports: { readAllCallers: [CLAUDE] } }));
+    const others = await research(url, "owner");
+    const own = await research(url, "claude");
+    assert.equal((await get(`${url}/reports/${others.id}`, "claude", "DELETE")).status, 404);
+    assert.equal((await get(`${url}/reports/${others.id}.md`, "owner")).status, 200, "the owner's report stays");
+    assert.equal((await get(`${url}/reports/${own.id}`, "claude", "DELETE")).status, 204);
+  });
+
+  it("leaves the other callers as they were: their own reports only, and 404 for anyone else's", async () => {
+    const { url } = await start(reportsConfig({ reports: { readAllCallers: [CLAUDE] } }));
+    const own = await research(url, "owner");
+    const claudes = await research(url, "claude");
+    assert.deepEqual(
+      JSON.parse((await get(`${url}/reports`, "owner")).text).reports.map((report: Json) => report.id),
+      [own.id],
+    );
+    for (const path of [`${claudes.id}.md`, `${claudes.id}.html`]) {
+      assert.equal((await get(`${url}/reports/${path}`, "owner")).status, 404);
+    }
+  });
+
+  it("reads nobody else's reports when the list is empty", async () => {
+    const { url } = await start(reportsConfig({ reports: { readAllCallers: [] } }));
+    const done = await research(url, "owner");
+    assert.deepEqual(JSON.parse((await get(`${url}/reports`, "claude")).text).reports, []);
+    assert.equal((await get(`${url}/reports/${done.id}.md`, "claude")).status, 404);
   });
 });
 
