@@ -1,0 +1,24 @@
+{
+  "mirrorDir": "/var/run/github-writer/mirror",
+  "app": {
+    "appId": "123456",
+    "installationId": "12345678",
+    "privateKeyFile": "/var/run/secrets/github-app/private-key.pem"
+  },
+  "repositories": [
+    {
+      "owner": "example-owner",
+      "name": "example-infra",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "writablePaths": ["security/vex/"]
+    },
+    {
+      "owner": "example-owner",
+      "name": "example-app",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "readOnlyPaths": [".github/"]
+    }
+  ]
+}

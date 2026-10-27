@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: agent
+spec:
+  template:
+    spec:
+      # The key stays out of the agent's reach only while the containers do not see each other's processes.
+      shareProcessNamespace: false
+      containers:
+        - name: host
+          volumeMounts:
+            - name: config
+              mountPath: /agent/github-writer.json
+              subPath: github-writer.json
+              readOnly: true
+            # The agent reads the mirrors only: it clones and fetches them as file:// URLs, without credentials.
+            - name: github-writer-mirror
+              mountPath: /var/run/github-writer/mirror
+              readOnly: true
+        # Pushes branches other than the default branch and opens pull requests, within github-writer.json, on the
+        # agent's behalf. It listens on 127.0.0.1 only, so no probe: the kubelet could not reach it.
+        - name: github-writer
+          image: ghcr.io/yuanying/fraction-agents
+          command: ["node", "/opt/fraction-agents/pi-package/bin/github-writer.ts", "--config", "/etc/fraction-agents/github-writer.json"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: github-writer-mirror
+              mountPath: /var/run/github-writer/mirror
+            - name: config
+              mountPath: /etc/fraction-agents/github-writer.json
+              subPath: github-writer.json
+              readOnly: true
+            # The GitHub App's key (app.privateKeyFile). Mounted in this container only.
+            - name: github-writer-app
+              mountPath: /var/run/secrets/github-app
+              readOnly: true
+      volumes:
+        # Made again from GitHub when the pod is.
+        - name: github-writer-mirror
+          emptyDir:
+            sizeLimit: 2Gi
+        - name: github-writer-app
+          secret:
+            secretName: github-writer-app
+            defaultMode: 0440
+            # The pod starts before the App exists; pushing and pull requests fail until the Secret is made.
+            optional: true

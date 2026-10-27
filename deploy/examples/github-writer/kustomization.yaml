@@ -1,0 +1,11 @@
+# An agent with the GitHub writer, to check that the component renders (test.yml). Not meant to be deployed.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+components:
+  - ../../components/github-writer
+configMapGenerator:
+  - name: agent-config
+    files:
+      - github-writer.json=github-writer.example.json
