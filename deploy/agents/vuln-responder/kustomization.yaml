@@ -1,0 +1,41 @@
+# vuln-responder (ADR 0028) on the generic host, with the GitHub writer (ADR 0027). The environment's overlay refers
+# to this directory as a remote base, pinned to a version, and sets the namespace, the image's tag, the StorageClass
+# and the ConfigMap vuln-responder-config (config.json and github-writer.json). It makes the Secret
+# vuln-responder-github-app (private-key.pem) by hand.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - ../../../agents/vuln-responder
+components:
+  - ../../components/github-writer
+labels:
+  - pairs:
+      app.kubernetes.io/instance: vuln-responder
+    includeSelectors: true
+patches:
+  - target: {kind: StatefulSet, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: vuln-responder
+      # The persistent clones of fleet-infra and the contexts' clones of the sources.
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 10Gi
+  - target: {kind: Service, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: vuln-responder
+  - target: {kind: ServiceAccount, name: agent}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: vuln-responder
+  - target: {kind: ClusterRoleBinding, name: agent-auth-delegator}
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: vuln-responder-auth-delegator
+  - path: statefulset.yaml

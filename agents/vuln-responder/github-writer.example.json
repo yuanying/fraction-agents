@@ -1,0 +1,24 @@
+{
+  "mirrorDir": "/var/run/github-writer/mirror",
+  "app": {
+    "appId": "5493557",
+    "installationId": "175776468",
+    "privateKeyFile": "/var/run/secrets/github-app/private-key.pem"
+  },
+  "repositories": [
+    {
+      "owner": "yuanying",
+      "name": "fleet-infra",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "writablePaths": ["security/vex/"]
+    }
+  ],
+  "workspace": {
+    "cloneDir": "/data/repos",
+    "commitIdentity": {
+      "name": "vuln-responder[bot]",
+      "email": "vuln-responder[bot]@users.noreply.github.com"
+    }
+  }
+}

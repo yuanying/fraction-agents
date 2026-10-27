@@ -3,27 +3,41 @@
 //   node workspace.ts prepare <dir>   make <dir> the context's git worktree, or keep the one that is there
 //   node workspace.ts remove <dir>    remove the worktree and the context's local branches
 //
-// The host runs it with pi's environment: the settings are `github-gate.json` in `PI_CODING_AGENT_DIR`, and the
-// context is `FRACTION_AGENTS_CONTEXT_ID`.
+// The host runs it with pi's environment: the settings are in `PI_CODING_AGENT_DIR`, and the context is
+// `FRACTION_AGENTS_CONTEXT_ID`. With `github-gate.json` (ADR 0009), <dir> is the worktree of the gate's repository.
+// With `github-writer.json` instead (ADR 0028), <dir> holds a worktree of each of the writer's repositories.
+import { existsSync } from "node:fs";
 import { basename } from "node:path";
 
 import { defaultGateConfigPath, loadGateConfig } from "../lib/config.ts";
 import { GitHubApp } from "../lib/github.ts";
 import { prepareWorkspace, removeWorkspace } from "../lib/workspace.ts";
+import { defaultWriterConfigPath, loadWriterConfig } from "../lib/writer-config.ts";
+import { prepareWriterWorkspace, removeWriterWorkspace } from "../lib/writer-workspace.ts";
 
 const [action, dir] = process.argv.slice(2);
-const path = defaultGateConfigPath();
-if ((action !== "prepare" && action !== "remove") || !dir || !path) {
+const gatePath = defaultGateConfigPath();
+if ((action !== "prepare" && action !== "remove") || !dir || !gatePath) {
   process.stderr.write("usage: PI_CODING_AGENT_DIR=<agent dir> workspace.ts prepare|remove <dir>\n");
   process.exit(2);
 }
-const config = loadGateConfig(path);
+const writerPath = defaultWriterConfigPath();
 const contextId = process.env.FRACTION_AGENTS_CONTEXT_ID || basename(dir);
 try {
-  if (action === "prepare") {
-    await prepareWorkspace({ config, github: new GitHubApp(config), dir, contextId });
+  if (!existsSync(gatePath) && writerPath && existsSync(writerPath)) {
+    const config = loadWriterConfig(writerPath);
+    if (action === "prepare") {
+      await prepareWriterWorkspace({ config, dir, contextId });
+    } else {
+      await removeWriterWorkspace({ config, dir, contextId });
+    }
   } else {
-    await removeWorkspace({ config, dir, contextId });
+    const config = loadGateConfig(gatePath);
+    if (action === "prepare") {
+      await prepareWorkspace({ config, github: new GitHubApp(config), dir, contextId });
+    } else {
+      await removeWorkspace({ config, dir, contextId });
+    }
   }
 } catch (error) {
   process.stderr.write(`workspace ${action}: ${error instanceof Error ? error.message : String(error)}\n`);

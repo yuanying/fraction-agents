@@ -12,7 +12,7 @@ import type { PiApi, ToolContext, ToolDefinition } from "../lib/pi.ts";
 import { WriterClient, pullRequestWorkspace, pushWorkspace, syncMirrors } from "../lib/writer-client.ts";
 import { mirrorPath, parseWriterConfig, type WriterConfig, type WriterRepository } from "../lib/writer-config.ts";
 import { createWriterServer } from "../lib/writer-server.ts";
-import { GitHubWriter } from "../lib/writer.ts";
+import { GitHubWriter, checkRepositoryChanges } from "../lib/writer.ts";
 import { FAKE_TOKEN, FakeGitHub, containsInFiles, git, makeFixture, write } from "./fixtures/repo.ts";
 
 const PREFIX = "vuln-responder/";
@@ -447,7 +447,7 @@ describe("github-writer extension", () => {
     const dir = agentDir(setup, { "github-writer.json": setup.config });
     const pi = new FakePi();
     createGitHubWriterExtension({ env: { PI_CODING_AGENT_DIR: dir }, client: () => setup.client })(pi);
-    assert.deepEqual([...pi.tools.keys()].sort(), ["github_pull_request", "github_push", "github_sync"]);
+    assert.deepEqual([...pi.tools.keys()].sort(), ["github_pull_request", "github_pull_request_status", "github_push", "github_sync"]);
 
     assert.match(await pi.call("github_sync", { repository: "example/infra" }, setup.dir), /example\/infra/);
     const cwd = await agentClone(setup, setup.infra);
@@ -457,6 +457,22 @@ describe("github-writer extension", () => {
     commit(cwd, { "security/vex/b.openvex.json": "{}\n" }, "more");
     assert.match(await pi.call("github_push", { path: "." }, join(cwd, "..")).catch((error: Error) => error.message), /not a clone/);
     assert.match(await pi.call("github_push", {}, cwd), /Pushed/);
+  });
+
+  it("tells the state of the pull request of the clone's current branch", async () => {
+    const setup = await setUp();
+    const dir = agentDir(setup, { "github-writer.json": setup.config });
+    const pi = new FakePi();
+    createGitHubWriterExtension({ env: { PI_CODING_AGENT_DIR: dir }, client: () => setup.client })(pi);
+    const cwd = await agentClone(setup, setup.infra);
+    assert.match(await pi.call("github_pull_request_status", {}, cwd), new RegExp(`${PREFIX}ctx-1 has no pull request`));
+    commit(cwd, { "security/vex/a.openvex.json": "{}\n" }, "vex");
+    await pi.call("github_pull_request", { title: "VEX" }, cwd);
+    assert.match(await pi.call("github_pull_request_status", {}, cwd), /#1 .* is open/);
+    setup.github.infra.close(1);
+    assert.match(await pi.call("github_pull_request_status", { path: "." }, cwd), /#1 .* was closed without merging/);
+    setup.github.infra.pulls[0]!.merged = true;
+    assert.match(await pi.call("github_pull_request_status", {}, cwd), /#1 .* was merged/);
   });
 
   it("registers nothing without its settings", () => {
@@ -496,5 +512,30 @@ describe("github-writer: without the App's key", () => {
     const response = await fetch(`${setup.url}/repos/example/wiki/sync`, { method: "POST" });
     assert.equal(response.status, 502);
     assert.match(((await response.json()) as { error: string }).error, /No GitHub token for example\/wiki: ENOENT/);
+  });
+});
+
+// The settings vuln-responder starts with (ADR 0028): it may write VEX documents to fleet-infra and nothing else.
+describe("vuln-responder's github-writer settings", () => {
+  const example = JSON.parse(readFileSync(new URL("../../agents/vuln-responder/github-writer.example.json", import.meta.url), "utf8"));
+
+  it("allow security/vex/ of fleet-infra only, on vuln-responder/ branches", () => {
+    const config = parseWriterConfig(example);
+    assert.deepEqual(
+      config.repositories.map((r) => ({ repository: `${r.owner}/${r.name}`, prefix: r.branchPrefix, writable: r.writablePaths })),
+      [{ repository: "yuanying/fleet-infra", prefix: "vuln-responder/", writable: ["security/vex/"] }],
+    );
+    assert.deepEqual(config.app, { appId: "5493557", installationId: "175776468", privateKeyFile: "/var/run/secrets/github-app/private-key.pem" });
+    assert.equal(config.mirrorDir, "/var/run/github-writer/mirror");
+    assert.equal(config.workspace?.cloneDir, "/data/repos");
+  });
+
+  it("make the writer refuse a change outside security/vex/, and take one inside", () => {
+    const [fleet] = parseWriterConfig(example).repositories as [WriterRepository];
+    const vex = { status: "A", path: "security/vex/ghcr.io/yuanying/hshelf.openvex.json" };
+    assert.deepEqual(checkRepositoryChanges([vex, { status: "M", path: "security/vex/index.docker.io/longhornio/longhorn-engine.openvex.json" }], fleet), []);
+    for (const path of ["apps/fraction-agents/kustomization.yaml", ".github/workflows/test.yml", "scripts/check-vex.sh", "security/vex-other/a.json"]) {
+      assert.match(checkRepositoryChanges([vex, { status: "M", path }], fleet).join("\n"), /only files under security\/vex\/ may be changed/, path);
+    }
   });
 });

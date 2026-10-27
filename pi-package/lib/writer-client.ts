@@ -166,6 +166,21 @@ export async function pullRequestWorkspace(
   return `Pull request #${pull.number} (${pull.url}) now has the latest commits of ${branch}.`;
 }
 
+/**
+ * The state of the latest pull request of the clone's current branch: open, merged, or closed without merging.
+ * After a merge or a close, later work goes on a new branch from the latest default branch (ADR 0028).
+ */
+export async function pullRequestStatusWorkspace(config: WriterConfig, client: WriterClient, cwd: string): Promise<string> {
+  const repository = await repositoryOf(config, cwd);
+  const current = await runGit(cwd, ["symbolic-ref", "--short", "-q", "HEAD"]);
+  if (current.code !== 0 || current.stdout === "") throw new Error("HEAD is detached. Switch to a branch first.");
+  const branch = current.stdout;
+  const pull = await client.latestPullRequest(repository, branch);
+  if (!pull) return `The branch ${branch} has no pull request in ${repository.owner}/${repository.name}.`;
+  const state = pull.state === "open" ? "is open" : pull.merged ? "was merged" : "was closed without merging";
+  return `Pull request #${pull.number} (${pull.url}) of ${branch} ${state}. Title: ${pull.title}`;
+}
+
 /** Brings the mirror of one repository (`owner/name`), or of every repository, up to date with GitHub. */
 export async function syncMirrors(config: WriterConfig, client: WriterClient, name?: string): Promise<string> {
   const repositories =

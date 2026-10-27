@@ -1,7 +1,8 @@
 // The GitHub writer's tools (ADR 0027): push a branch and open or update its pull request through the sidecar that
-// holds the GitHub App's key, and bring the read-only mirrors up to date. The agent has no GitHub credentials; the
-// sidecar decides what may be written. Settings: `github-writer.json` in the agent directory, the same file the
-// sidecar reads. Off when the agent has the GitHub gate (ADR 0009) instead, whose tools have the same names.
+// holds the GitHub App's key, tell the state of that pull request (ADR 0028), and bring the read-only mirrors up to
+// date. The agent has no GitHub credentials; the sidecar decides what may be written. Settings: `github-writer.json`
+// in the agent directory, the same file the sidecar reads. Off when the agent has the GitHub gate (ADR 0009) instead,
+// whose tools have the same names.
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -9,7 +10,7 @@ import { Type } from "typebox";
 
 import { GATE_CONFIG_FILE } from "../lib/config.ts";
 import { text, type PiApi, type ToolContext } from "../lib/pi.ts";
-import { WriterClient, pullRequestWorkspace, pushWorkspace, syncMirrors, writerUrl } from "../lib/writer-client.ts";
+import { WriterClient, pullRequestStatusWorkspace, pullRequestWorkspace, pushWorkspace, syncMirrors, writerUrl } from "../lib/writer-client.ts";
 import { defaultWriterConfigPath, loadWriterConfig, type WriterConfig } from "../lib/writer-config.ts";
 
 export interface GitHubWriterOptions {
@@ -83,6 +84,18 @@ export function createGitHubWriterExtension(options: GitHubWriterOptions = {}): 
       ) {
         const { path: _path, ...input } = params;
         return text(await pullRequestWorkspace(config, client, where(ctx, params), input));
+      },
+    });
+
+    pi.registerTool({
+      name: "github_pull_request_status",
+      label: "State of the pull request",
+      description:
+        "Tell whether the latest pull request of a clone's current branch is open, merged, or closed without merging, or that it has none. A merged or closed pull request takes no more commits: work on a new branch from the latest default branch.",
+      promptSnippet: "Tell the state of the pull request of a clone's branch",
+      parameters: Type.Object({ path: pathParameter }),
+      async execute(_id: string, params: { path?: string }, _signal: unknown, _onUpdate: unknown, ctx: ToolContext) {
+        return text(await pullRequestStatusWorkspace(config, client, where(ctx, params)));
       },
     });
 

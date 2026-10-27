@@ -29,6 +29,7 @@ jobs:
           kubectl kustomize deploy/agents/gmail-agent > /dev/null
           kubectl kustomize deploy/agents/news-agent > /dev/null
           kubectl kustomize deploy/agents/deep-researcher > /dev/null
+          kubectl kustomize deploy/agents/vuln-responder > /dev/null
           kubectl kustomize deploy/examples/github-writer > /dev/null
 
   # main is pushed only from a commit whose tests passed, and one push to main at a time, so that main ends up on the
