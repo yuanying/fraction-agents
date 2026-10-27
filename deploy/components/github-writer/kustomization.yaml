@@ -1,0 +1,15 @@
+# The GitHub writer sidecar (ADR 0027), for any agent on the generic host: add this directory to the agent's
+# components. It adds the github-writer container, which alone holds the GitHub App's key, and the read-only mirror
+# the agent clones from. The agent's container gets the same settings file (github-writer.json, no secrets), which
+# turns on the Pi package's github_push, github_pull_request and github_sync tools.
+#
+# The environment's overlay provides:
+#   - the key github-writer.json in the agent's ConfigMap mounted as the volume `config` (<agent>-config);
+#     mirrorDir must be /var/run/github-writer/mirror and app.privateKeyFile /var/run/secrets/github-app/private-key.pem.
+#   - the Secret github-writer-app with private-key.pem, made by hand and never in git. When two agents in one
+#     namespace use the component, the agent's kustomization patches the volume github-writer-app to its own Secret.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target: {kind: StatefulSet}
+    path: statefulset.yaml
