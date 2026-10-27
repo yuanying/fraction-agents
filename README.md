@@ -34,6 +34,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0025. 設定に挙げた呼び出し元には、機械の口で他の呼び出し元のレポートも読ませる](docs/adr/0025-callers-that-read-every-callers-reports.md)
 - [0026. main への push ごとに image を `main` のタグで出し、外れた版を消す](docs/adr/0026-push-main-images-for-vulnerability-tracking.md)
 - [0027. GitHub への書き込みを、App の鍵を持つ sidecar に代行させる](docs/adr/0027-github-writer-sidecar.md)
+- [0028. 脆弱性への対応の係（vuln-responder）: 分析して VEX の注釈を PR で出す](docs/adr/0028-vuln-responder.md)
 
 ## 汎用ホスト
 
@@ -502,7 +503,7 @@ image の `/opt/fraction-agents/pi-package` に入り、エージェントは se
 | 拡張 | 中身 |
 |---|---|
 | `github-gate` | GitHub への書き込みの門番（ADR 0009）。agentDir に `github-gate.json` があるときだけ働く |
-| `github-writer` | 鍵を持つ sidecar（github-writer）を通して GitHub に書くツール `github_push`・`github_pull_request`・`github_sync`（ADR 0027）。agentDir に `github-writer.json` があり、`github-gate.json` が無いときだけ働く |
+| `github-writer` | 鍵を持つ sidecar（github-writer）を通して GitHub に書くツール `github_push`・`github_pull_request`・`github_sync`（ADR 0027）と、PR の状態を見る `github_pull_request_status`（ADR 0028）。agentDir に `github-writer.json` があり、`github-gate.json` が無いときだけ働く |
 | `ask-caller` | 呼び出し元に質問するツール `ask_caller`。汎用ホストの「聞き返し」で `INPUT_REQUIRED` になる |
 | `attach-image` | 返事に画像を添えるツール `attach_image`。汎用ホストの「画像の成果物」になる。ホストの外（`FRACTION_AGENTS_ARTIFACT_OUTBOX` が無いとき）では出ない |
 | `submit-reply` | 返事を要約・節・出典の形で出すツール `submit_reply`。汎用ホストの「構造のある返事」になる。ホストの外（`FRACTION_AGENTS_REPLY_FILE` が無いとき）では出ない |
@@ -608,6 +609,13 @@ pi は起動するので、`ask_caller` とログインは使える。エージ�
   context のブランチ（初めてなら `<branchPrefix><contextId>` を最新の既定のブランチから）で作る。あれば、そのまま残す。
 - `remove <dir>`: worktree と、その context のローカルのブランチを消す。push したものは GitHub に残る。
 
+agentDir に `github-gate.json` が無く `github-writer.json` があるときは、github-writer の mirror から作る（ADR 0028）。
+
+- `prepare <dir>`: `workspace.cloneDir` に、各リポジトリの mirror を `origin` にした bare の clone を持ち、fetch する。
+  `<dir>/<owner>/<name>` にそのリポジトリの worktree を、`<branchPrefix><contextId>` のブランチで作る。あれば、そのまま残す。
+  commit の名義は `workspace.commitIdentity`。mirror がまだ無ければ失敗する。資格は要らない。
+- `remove <dir>`: worktree と、その context のローカルのブランチ（`-<番号>` の付いたものも）を消す。
+
 設定の例:
 
 ```json
@@ -663,6 +671,8 @@ HTTP の口は `127.0.0.1:<port>` にだけ開く。答えは JSON で、拒ん�
 - `github_push`: 作業ディレクトリ（引数 `path` で変えられる）の clone の `origin` から対象のリポジトリを決め、mirror を合わせて fetch し、
   mirror に無い commit だけの bundle を作って送る。commit していない変更があれば送らない。
 - `github_pull_request`: push してから PR を作る、または更新する。引数は `path`・`title`・`body`。
+- `github_pull_request_status`: clone の今のブランチの最新の PR が、開いている・マージ済み・閉じた・無い、のどれかを返す（ADR 0028）。
+  マージ済みか閉じた PR のブランチには積まず、最新の既定のブランチから新しいブランチで続ける。
 - `github_sync`: mirror を GitHub に合わせる。引数 `repository`（`owner/name`）を省けば全部。そのあと clone で `git fetch origin` する。
 
 ### `github-writer.json`
@@ -684,6 +694,8 @@ github-writer とエージェントの両方が同じファイルを読む。秘
 | `repositories[].writablePaths` | | `[]` | 書けば、変更はすべてこの下でなければならない |
 | `repositories[].appendOnlyPaths` | | `[]` | 追加だけを許すパス |
 | `repositories[].readOnlyPaths` | | `[]` | すべての変更を拒否するパス |
+| `workspace.cloneDir` | | | エージェントの側だけ。context ごとの worktree の元になる永続の clone の置き場。絶対パス（上の「context ごとの worktree」） |
+| `workspace.commitIdentity.name`・`.email` | `workspace` を書くなら必須 | | エージェントの側だけ。worktree での commit の名義 |
 
 パスの意味は `github-gate.json` と同じである。
 
@@ -726,6 +738,13 @@ Pod の中の収集係（別のコンテナ）が、`news.json` の情報源（R
 頼まれたことを、ウェブと public の GitHub のリポジトリを読んで時間をかけて調べ、出典の付いたレポートにして返す。
 リポジトリは clone して読むだけで、実行しない。1 回の依頼は最長 60 分、同時に走るのは 1 件まで（ADR 0019）。返事はレポートとして保存する（ADR 0020）。
 ページを読む Pi パッケージを足した別の image（`ghcr.io/yuanying/fraction-agents-deep-researcher`）で動く。詳しくは `agents/deep-researcher/README.md`。
+
+## 脆弱性への対応の係
+
+`agents/vuln-responder/` に、脆弱性への対応の係の agentDir の中身の雛形と、汎用ホストの設定の例を置く（ADR 0028）。
+脆弱性の集計役（vuln-tracker）から対象ごとの脆弱性の一覧を受け、分析して、fleet-infra の `security/vex/` に OpenVEX の注釈の PR を出す。
+GitHub には github-writer（ADR 0027）を通してだけ書く。聞き返さず、同時に走るのは 1 件まで、1 件は最長 60 分。
+manifest は `deploy/agents/vuln-responder`。鍵は Secret `vuln-responder-github-app` に手で置く。詳しくは `agents/vuln-responder/README.md`。
 
 ## 「前回の受け取り」の行
 
