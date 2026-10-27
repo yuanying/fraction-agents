@@ -114,6 +114,11 @@ export class FakeGitHub implements GitHubClient {
     return this.pulls.find((pull) => pull.head === head && pull.state === "open");
   }
 
+  async latestPullRequest(head: string): Promise<PullRequest | undefined> {
+    const found = this.pulls.filter((pull) => pull.head === head).at(-1);
+    return found ? { ...found } : undefined;
+  }
+
   async getPullRequest(number: number): Promise<PullRequest> {
     const pull = this.pulls.find((candidate) => candidate.number === number);
     if (!pull) throw new Error(`no pull request #${number}`);

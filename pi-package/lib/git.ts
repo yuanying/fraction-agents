@@ -35,7 +35,7 @@ export async function git(cwd: string, args: readonly string[], env: Record<stri
  * `GIT_CONFIG_*` variables of that child process only: it never reaches pi's environment, bash, a file or the
  * repository's config. For an http(s) remote it is scoped to the remote's origin.
  */
-export async function authEnv(github: GitHubClient, remoteUrl: string): Promise<Record<string, string>> {
+export async function authEnv(github: Pick<GitHubClient, "gitAuthorization">, remoteUrl: string): Promise<Record<string, string>> {
   const authorization = await github.gitAuthorization();
   const url = new URL(remoteUrl);
   const key = url.protocol === "https:" || url.protocol === "http:" ? `http.${url.origin}/.extraHeader` : "http.extraHeader";

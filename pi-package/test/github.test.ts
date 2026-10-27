@@ -134,6 +134,16 @@ describe("GitHub App client", () => {
     assert.equal((await app.updatePullRequest(4, { title: "New title" })).title, "New title");
   });
 
+  it("finds the branch's latest pull request in any state", async () => {
+    seen.length = 0;
+    const app = new GitHubApp({ apiUrl, app: config().app, repository: { owner: "example", name: "wiki" } });
+    assert.equal((await app.latestPullRequest("wiki-keeper/x"))?.number, 3);
+    const query = new URLSearchParams(seen.find((s) => s.path.startsWith("/repos/example/wiki/pulls?"))!.path.split("?")[1]);
+    assert.equal(query.get("head"), "example:wiki-keeper/x");
+    assert.equal(query.get("state"), "all");
+    assert.equal(query.get("direction"), "desc");
+  });
+
   it("merges with the expected head, and reports a refusal as not merged", async () => {
     const app = new GitHubApp(config());
     assert.deepEqual(await app.mergePullRequest(4, { sha: "abc", method: "merge" }), {

@@ -1,7 +1,12 @@
 import { createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import type { GateConfig } from "./config.ts";
+/** What {@link GitHubApp} needs: the App, and the one repository its tokens are for. A gate's settings have these. */
+export interface GitHubAppSettings {
+  apiUrl: string;
+  app: { appId: string; installationId: string; privateKeyFile: string };
+  repository: { owner: string; name: string };
+}
 
 export interface PullRequest {
   number: number;
@@ -52,12 +57,12 @@ interface RawPull {
  * memory, in the pi process: never in the environment, a file or git's config.
  */
 export class GitHubApp implements GitHubClient {
-  readonly #config: GateConfig;
+  readonly #config: GitHubAppSettings;
   readonly #fetch: typeof fetch;
   readonly #now: () => number;
   #token: { value: string; expiresAt: number } | undefined;
 
-  constructor(config: GateConfig, options: { fetch?: typeof fetch; now?: () => number } = {}) {
+  constructor(config: GitHubAppSettings, options: { fetch?: typeof fetch; now?: () => number } = {}) {
     this.#config = config;
     this.#fetch = options.fetch ?? fetch;
     this.#now = options.now ?? Date.now;
@@ -70,6 +75,14 @@ export class GitHubApp implements GitHubClient {
   async findPullRequest(head: string): Promise<PullRequest | undefined> {
     const { owner } = this.#config.repository;
     const query = new URLSearchParams({ head: `${owner}:${head}`, state: "open" });
+    const pulls = (await this.#api("GET", `${this.#repoPath()}/pulls?${query}`)) as RawPull[];
+    return pulls[0] ? pull(pulls[0]) : undefined;
+  }
+
+  /** The branch's most recent pull request, whatever its state. */
+  async latestPullRequest(head: string): Promise<PullRequest | undefined> {
+    const { owner } = this.#config.repository;
+    const query = new URLSearchParams({ head: `${owner}:${head}`, state: "all", sort: "created", direction: "desc", per_page: "1" });
     const pulls = (await this.#api("GET", `${this.#repoPath()}/pulls?${query}`)) as RawPull[];
     return pulls[0] ? pull(pulls[0]) : undefined;
   }
