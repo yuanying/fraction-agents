@@ -4,6 +4,6 @@
   "private": true,
   "description": "The third-party Pi package in the news agent's image (ADR 0017): fetch_content, the same page reader as the web researcher's. Pi supplies its peer dependencies.",
   "dependencies": {
-    "@kvidzibo/pi-web-access": "0.1.1"
+    "@kvidzibo/pi-web-access": "0.2.1"
   }
 }
