@@ -6,6 +6,9 @@
 # that cannot write packages.
 # release.yml calls this with a version as well: a tag pushed by its GITHUB_TOKEN starts no workflow, so it pushes
 # the images itself, from the commit it is about to tag, before the tag exists (ADR 0024).
+# test.yml calls this with main on every push to main, once the tests pass: all of them are pushed as main, and the
+# versions that tag leaves untagged are deleted (ADR 0026). Every pushed image carries the source repository and the
+# commit it was built from as OCI labels.
 name: image
 
 on:
@@ -15,7 +18,7 @@ on:
   workflow_call:
     inputs:
       version:
-        description: The version to push the images as (v1.2.3).
+        description: The version to push the images as (v1.2.3), or main.
         type: string
         required: true
 
@@ -88,5 +91,27 @@ jobs:
           target: ${{ matrix.target }}
           push: true
           tags: ${{ steps.name.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # Moving main leaves the version it pointed at untagged. The action deletes untagged images together with their
+  # platform manifests and attestations, and never a tagged image or what a tagged image refers to. It is not safe to
+  # run twice at once against the same package.
+  cleanup:
+    needs: publish
+    if: inputs.version == 'main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ghcr-cleanup
+      cancel-in-progress: false
+    permissions:
+      packages: write
+    steps:
+      - uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          packages: fraction-agents,fraction-agents-web-researcher,fraction-agents-news-agent,fraction-agents-deep-researcher
+          delete-untagged: true
+          validate: true
