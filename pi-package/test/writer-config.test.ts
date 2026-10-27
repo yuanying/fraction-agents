@@ -73,6 +73,20 @@ describe("github-writer settings", () => {
     assert.throws(() => parseWriterConfig(withRepository({ readOnlyPaths: ["a/../b"] })), /readOnlyPaths must hold paths relative to the repository/);
   });
 
+  it("reads the agent's workspace: where the clones go and who commits", () => {
+    assert.equal(parseWriterConfig(MINIMAL).workspace, undefined);
+    const config = parseWriterConfig({
+      ...MINIMAL,
+      workspace: { cloneDir: "/data/repos", commitIdentity: { name: "vuln-responder[bot]", email: "1+vuln-responder[bot]@users.noreply.github.com" } },
+    });
+    assert.deepEqual(config.workspace, {
+      cloneDir: "/data/repos",
+      commitIdentity: { name: "vuln-responder[bot]", email: "1+vuln-responder[bot]@users.noreply.github.com" },
+    });
+    assert.throws(() => parseWriterConfig({ ...MINIMAL, workspace: { cloneDir: "repos", commitIdentity: { name: "a", email: "b" } } }), /workspace\.cloneDir must be an absolute path/);
+    assert.throws(() => parseWriterConfig({ ...MINIMAL, workspace: { cloneDir: "/data/repos" } }), /workspace\.commitIdentity must be an object/);
+  });
+
   it("refuses a relative mirror directory or key file, and a bad port", () => {
     assert.throws(() => parseWriterConfig({ ...MINIMAL, mirrorDir: "mirror" }), /mirrorDir must be an absolute path/);
     assert.throws(() => parseWriterConfig({ ...MINIMAL, app: { ...MINIMAL.app, privateKeyFile: "key.pem" } }), /app\.privateKeyFile must be an absolute path/);

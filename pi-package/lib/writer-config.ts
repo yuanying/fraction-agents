@@ -37,6 +37,17 @@ export interface WriterConfig {
   /** The largest bundle the sidecar takes in one push. */
   maxBundleBytes: number;
   repositories: WriterRepository[];
+  /** The agent's side only: how the workspace command readies a context's worktrees. The sidecar ignores it. */
+  workspace?: WriterWorkspace;
+}
+
+/**
+ * The context's workspace with the GitHub writer (ADR 0028): a persistent clone of each repository's mirror under
+ * `cloneDir`, and a worktree of each in every context, committing as `commitIdentity`.
+ */
+export interface WriterWorkspace {
+  cloneDir: string;
+  commitIdentity: { name: string; email: string };
 }
 
 /** The file name of the settings: in the agent directory for the extension, mounted beside it for the sidecar. */
@@ -83,6 +94,19 @@ export function parseWriterConfig(input: unknown): WriterConfig {
     syncIntervalSeconds: root.syncIntervalSeconds === undefined ? 300 : positive(root.syncIntervalSeconds, "syncIntervalSeconds"),
     maxBundleBytes: root.maxBundleBytes === undefined ? 50 * 1024 * 1024 : positive(root.maxBundleBytes, "maxBundleBytes"),
     repositories,
+    ...(root.workspace === undefined ? {} : { workspace: workspace(root.workspace) }),
+  };
+}
+
+function workspace(input: unknown): WriterWorkspace {
+  const value = record(input, "workspace");
+  const identity = record(value.commitIdentity, "workspace.commitIdentity");
+  return {
+    cloneDir: absolute(value, "cloneDir", "workspace.cloneDir"),
+    commitIdentity: {
+      name: text(identity, "name", "workspace.commitIdentity.name"),
+      email: text(identity, "email", "workspace.commitIdentity.email"),
+    },
   };
 }
 
