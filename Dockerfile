@@ -13,8 +13,9 @@ RUN npm run build
 FROM node:24.22.1-bookworm-slim AS host
 ENV NODE_ENV=production
 # What pi's own container recipe installs: a shell and git for its tools, ripgrep for search, CA certificates.
+# curl and jq for vuln-responder (ADR 0028): it reads advisories with curl, and fleet-infra's VEX check runs on jq.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash ca-certificates git ripgrep \
+  && apt-get install -y --no-install-recommends bash ca-certificates curl git jq ripgrep \
   && rm -rf /var/lib/apt/lists/*
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.4.0 \
   && npm cache clean --force

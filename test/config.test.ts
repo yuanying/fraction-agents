@@ -220,6 +220,24 @@ describe("the agents' examples", () => {
     }
   });
 
+  // vuln-responder (ADR 0028) is asked by vuln-tracker, and by hand by the owner and the owner's Claude. One task at a
+  // time, with a time limit, each context on worktrees of the repositories it may write to.
+  it("let vuln-tracker ask vuln-responder, one task at a time", () => {
+    const config = loadConfig(join(agentsDir, "vuln-responder", "config.example.json"));
+    assert.deepEqual(config.allowedCallers.toSorted(), [
+      "system:serviceaccount:fraction-agents:claude",
+      "system:serviceaccount:fraction-agents:owner",
+      "system:serviceaccount:vuln-tracker:vuln-tracker",
+    ]);
+    assert.equal(config.maxConcurrentTasks, 1);
+    assert.ok(config.taskTimeLimitSeconds !== undefined && config.taskTimeLimitSeconds <= 3600);
+    assert.deepEqual(config.contextWorkspace?.prepare, ["node", "/opt/fraction-agents/pi-package/bin/workspace.ts", "prepare"]);
+    assert.deepEqual(config.contextWorkspace?.remove, ["node", "/opt/fraction-agents/pi-package/bin/workspace.ts", "remove"]);
+    // It never asks back: its caller is a program.
+    assert.ok(config.piCommand.includes("--exclude-tools"));
+    assert.ok(config.piCommand[config.piCommand.indexOf("--exclude-tools") + 1]?.split(",").includes("ask_caller"));
+  });
+
   // The deep researcher reads code and never runs it (ADR 0022): pi gives it the reading tools only, and the host
   // leaves out the tools that run or change things and the one that searches outside (the extensions stop them too).
   it("give the deep researcher only the reading tools", () => {

@@ -1,0 +1,27 @@
+{
+  "name": "vuln-responder",
+  "description": "脆弱性への対応の係。脆弱性の集計役（vuln-tracker）から、1 つの対象（自作イメージのソースのリポジトリか、fleet-infra の外のイメージ）の Critical の脆弱性の一覧を受け、1 件ずつソース・lock ファイル・ベースイメージ・上流の changelog と advisory から分析し、fleet-infra の security/vex/ に OpenVEX の注釈を書いた PR を出す。直す PR（依存の更新・版上げ）はまだ出さない。マージ・タグ付け・apply はしない。聞き返さず、判断できなければ PR を出さずに理由を返す。依頼の中身（対象・mode・脆弱性の一覧・VEX のファイル）はすべて text に書く。data の part は読まない。人が頼むときは対象と脆弱性の ID とイメージを書けばよい。同じ対象の続きは、最初の返事の contextId を付けて同じ context で頼む。同時に走るのは 1 件までで、1 件は最長 60 分。依頼の本文の末尾の「前回の受け取り: <時刻>」の行は使わない（あっても無視する）。",
+  "skills": [
+    {
+      "id": "vex",
+      "name": "脆弱性の注釈（VEX）",
+      "description": "対象のイメージの脆弱性を分析し、状態・理由・見直す期限を OpenVEX の注釈にして fleet-infra に PR を出す。",
+      "examples": ["ghcr.io/yuanying/hshelf の CVE-2026-33210（json 2.18.0、ソースは yuanying/hshelf）を分析して VEX の PR を出して"]
+    }
+  ],
+  "publicUrl": "https://agents.example.test/vuln-responder/",
+  "allowedCallers": [
+    "system:serviceaccount:vuln-tracker:vuln-tracker",
+    "system:serviceaccount:fraction-agents:owner",
+    "system:serviceaccount:fraction-agents:claude"
+  ],
+  "agentDir": "/agent",
+  "dataDir": "/data",
+  "piCommand": ["pi", "--exclude-tools", "ask_caller,attach_image"],
+  "contextWorkspace": {
+    "prepare": ["node", "/opt/fraction-agents/pi-package/bin/workspace.ts", "prepare"],
+    "remove": ["node", "/opt/fraction-agents/pi-package/bin/workspace.ts", "remove"]
+  },
+  "taskTimeLimitSeconds": 3600,
+  "maxConcurrentTasks": 1
+}

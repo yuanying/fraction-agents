@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: agent
+spec:
+  template:
+    spec:
+      containers:
+        - name: host
+          # git over the clones besides pi.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        - name: agent-dir
+          configMap:
+            name: vuln-responder-agent-dir
+        - name: config
+          configMap:
+            name: vuln-responder-config
+        # The GitHub App's key, in the github-writer container only (ADR 0027). Made by hand, never in git.
+        - name: github-writer-app
+          secret:
+            secretName: vuln-responder-github-app
+            defaultMode: 0440
+            optional: true
