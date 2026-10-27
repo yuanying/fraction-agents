@@ -447,7 +447,7 @@ describe("github-writer extension", () => {
     const dir = agentDir(setup, { "github-writer.json": setup.config });
     const pi = new FakePi();
     createGitHubWriterExtension({ env: { PI_CODING_AGENT_DIR: dir }, client: () => setup.client })(pi);
-    assert.deepEqual([...pi.tools.keys()].sort(), ["github_pull_request", "github_push", "github_sync"]);
+    assert.deepEqual([...pi.tools.keys()].sort(), ["github_pull_request", "github_pull_request_status", "github_push", "github_sync"]);
 
     assert.match(await pi.call("github_sync", { repository: "example/infra" }, setup.dir), /example\/infra/);
     const cwd = await agentClone(setup, setup.infra);
@@ -457,6 +457,22 @@ describe("github-writer extension", () => {
     commit(cwd, { "security/vex/b.openvex.json": "{}\n" }, "more");
     assert.match(await pi.call("github_push", { path: "." }, join(cwd, "..")).catch((error: Error) => error.message), /not a clone/);
     assert.match(await pi.call("github_push", {}, cwd), /Pushed/);
+  });
+
+  it("tells the state of the pull request of the clone's current branch", async () => {
+    const setup = await setUp();
+    const dir = agentDir(setup, { "github-writer.json": setup.config });
+    const pi = new FakePi();
+    createGitHubWriterExtension({ env: { PI_CODING_AGENT_DIR: dir }, client: () => setup.client })(pi);
+    const cwd = await agentClone(setup, setup.infra);
+    assert.match(await pi.call("github_pull_request_status", {}, cwd), new RegExp(`${PREFIX}ctx-1 has no pull request`));
+    commit(cwd, { "security/vex/a.openvex.json": "{}\n" }, "vex");
+    await pi.call("github_pull_request", { title: "VEX" }, cwd);
+    assert.match(await pi.call("github_pull_request_status", {}, cwd), /#1 .* is open/);
+    setup.github.infra.close(1);
+    assert.match(await pi.call("github_pull_request_status", { path: "." }, cwd), /#1 .* was closed without merging/);
+    setup.github.infra.pulls[0]!.merged = true;
+    assert.match(await pi.call("github_pull_request_status", {}, cwd), /#1 .* was merged/);
   });
 
   it("registers nothing without its settings", () => {
@@ -498,3 +514,4 @@ describe("github-writer: without the App's key", () => {
     assert.match(((await response.json()) as { error: string }).error, /No GitHub token for example\/wiki: ENOENT/);
   });
 });
+
