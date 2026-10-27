@@ -502,6 +502,7 @@ image の `/opt/fraction-agents/pi-package` に入り、エージェントは se
 | 拡張 | 中身 |
 |---|---|
 | `github-gate` | GitHub への書き込みの門番（ADR 0009）。agentDir に `github-gate.json` があるときだけ働く |
+| `github-writer` | 鍵を持つ sidecar（github-writer）を通して GitHub に書くツール `github_push`・`github_pull_request`・`github_sync`（ADR 0027）。agentDir に `github-writer.json` があり、`github-gate.json` が無いときだけ働く |
 | `ask-caller` | 呼び出し元に質問するツール `ask_caller`。汎用ホストの「聞き返し」で `INPUT_REQUIRED` になる |
 | `attach-image` | 返事に画像を添えるツール `attach_image`。汎用ホストの「画像の成果物」になる。ホストの外（`FRACTION_AGENTS_ARTIFACT_OUTBOX` が無いとき）では出ない |
 | `submit-reply` | 返事を要約・節・出典の形で出すツール `submit_reply`。汎用ホストの「構造のある返事」になる。ホストの外（`FRACTION_AGENTS_REPLY_FILE` が無いとき）では出ない |
@@ -615,6 +616,76 @@ pi は起動するので、`ask_caller` とログインは使える。エージ�
   "remove": ["node", "/opt/fraction-agents/pi-package/bin/workspace.ts", "remove"]
 }
 ```
+
+### GitHub への書き込みの sidecar
+
+github-writer は、GitHub App の鍵を持つ sidecar のコンテナである（ADR 0027）。エージェントのコンテナには鍵も token も無い。
+エージェントは github-writer に頼み、github-writer が設定の範囲で GitHub に書く。
+汎用ホストの image の `pi-package/bin/github-writer.ts` を、`--config <github-writer.json>` を付けて動かす。
+
+github-writer がすること:
+
+- 設定のリポジトリごとに、読み取り専用の mirror（bare のリポジトリ）を `<mirrorDir>/<owner>/<name>.git` に持つ。
+  GitHub のブランチをそのまま写す。起動したとき、`syncIntervalSeconds` ごと、頼まれたときに fetch する。
+- 受け取った bundle のブランチを、規則を確かめてから push する。早送りだけで、force push はしない。
+- ブランチの PR を既定のブランチに向けて作る。開いている PR があれば、題と本文を更新する。
+
+github-writer がしないこと: マージ、既定のブランチへの push、ブランチとタグの削除、タグの push、リポジトリの設定の変更。どれも口が無い。
+
+push を受け付けるのは、次をすべて満たすときだけである。
+
+- リポジトリが設定の `repositories` にある。無ければ 404。
+- ブランチが既定のブランチではなく、そのリポジトリの `branchPrefix` で始まる。外れれば 403。
+- bundle が持つ ref が `refs/heads/<ブランチ>` の 1 つだけで、mirror に取り込める。外れれば 400。大きさは `maxBundleBytes` まで（超えれば 413）。
+- 既定のブランチとの merge base からの差分が、次の規則に合う。外れれば 403 で、外れたファイルを 1 行ずつ返す。
+  - `writablePaths` を書いたなら、すべての変更がその下にある
+  - `appendOnlyPaths` の下は追加だけ。`readOnlyPaths` の下は何も変えない
+- GitHub のブランチの早送りになる。ならなければ 409。
+
+HTTP の口は `127.0.0.1:<port>` にだけ開く。答えは JSON で、拒んだときは `error` に理由を載せる。
+
+| 口 | 中身 |
+|---|---|
+| `GET /healthz` | 動いているか |
+| `POST /repos/<owner>/<name>/sync` | mirror を GitHub に合わせる。既定のブランチの名前と commit を返す |
+| `POST /repos/<owner>/<name>/push?branch=<ブランチ>` | 本文は git の bundle。push して、ブランチ・commit・`pushed` か `unchanged` かを返す |
+| `POST /repos/<owner>/<name>/pulls` | 本文は `branch`（必須）・`title`・`body` の JSON。PR を作れば 201、更新すれば 200 で、PR の番号・URL・状態を返す。新しい PR には `title` が要る |
+| `GET /repos/<owner>/<name>/pulls?branch=<ブランチ>` | そのブランチの最新の PR（開いている・閉じた・マージ済み）。無ければ 404 |
+
+- token は対象のリポジトリ 1 つだけに絞って発行し、権限は contents と pull requests の書き込みだけにする。
+  そのため、`.github/workflows/` の変更の push は GitHub が拒む。
+- token は github-writer のメモリにだけ持つ。レスポンス、ログ、mirror の設定には出さない。git には門番と同じく、1 回の git のプロセスの環境変数でヘッダを渡す。
+- エージェントの bundle は自分の mirror に取り込んでから扱う。github-writer がエージェントの clone で git を走らせることはない。
+
+エージェントの側（拡張 `github-writer`）:
+
+- mirror を `file://<mirrorDir>/<owner>/<name>.git` で clone し、そこで作業する。資格は要らない。
+- `github_push`: 作業ディレクトリ（引数 `path` で変えられる）の clone の `origin` から対象のリポジトリを決め、mirror を合わせて fetch し、
+  mirror に無い commit だけの bundle を作って送る。commit していない変更があれば送らない。
+- `github_pull_request`: push してから PR を作る、または更新する。引数は `path`・`title`・`body`。
+- `github_sync`: mirror を GitHub に合わせる。引数 `repository`（`owner/name`）を省けば全部。そのあと clone で `git fetch origin` する。
+
+### `github-writer.json`
+
+github-writer とエージェントの両方が同じファイルを読む。秘密は置かない。例は `deploy/examples/github-writer/github-writer.example.json`。
+
+| 項目 | 必須 | 既定 | 意味 |
+|---|---|---|---|
+| `port` | | `8091` | github-writer が `127.0.0.1` で listen するポート |
+| `mirrorDir` | 必須 | | mirror の置き場。絶対パス。github-writer とエージェントで同じパスに mount する |
+| `apiUrl` | | `https://api.github.com` | REST API |
+| `app.appId`・`app.installationId`・`app.privateKeyFile` | 必須 | | GitHub App の ID、installation の ID、秘密鍵のファイル（github-writer のコンテナにだけある） |
+| `syncIntervalSeconds` | | `300` | mirror を GitHub に合わせる間隔の秒数 |
+| `maxBundleBytes` | | `52428800`（50 MiB） | 1 回の push で受け取る bundle の大きさの上限 |
+| `repositories[].owner`・`repositories[].name` | 必須 | | 書いてよいリポジトリ |
+| `repositories[].defaultBranch` | | `main` | 既定のブランチ |
+| `repositories[].remoteUrl` | | `https://github.com/<owner>/<name>.git` | git の remote |
+| `repositories[].branchPrefix` | 必須 | | push と PR を許すブランチの接頭辞。既定のブランチがこれで始まってはいけない |
+| `repositories[].writablePaths` | | `[]` | 書けば、変更はすべてこの下でなければならない |
+| `repositories[].appendOnlyPaths` | | `[]` | 追加だけを許すパス |
+| `repositories[].readOnlyPaths` | | `[]` | すべての変更を拒否するパス |
+
+パスの意味は `github-gate.json` と同じである。
 
 ## Wiki 管理人
 
@@ -757,6 +828,16 @@ Gmail 係（`deploy/agents/gmail-agent`）も同じ形で、次が違う。
 - image は汎用ホストの `ghcr.io/yuanying/fraction-agents`。
 - Secret `gmail-agent-google`（キー `token.json`）を `/var/run/secrets/gmail` にマウントする。本人の OAuth の資格で、本人が認可して手で作る。
   Secret が無くても Pod は起動する。その間、Gmail の道具は失敗する。
+
+GitHub への書き込みの sidecar（ADR 0027）は、どの係にも付けられる kustomize の Component（`deploy/components/github-writer`）である。
+係の kustomization の `components` に足すと、StatefulSet に次が足される。描画の例は `deploy/examples/github-writer`。
+
+- コンテナ `github-writer`。汎用ホストの image で `bin/github-writer.ts` を動かす。`127.0.0.1` で listen するので probe は無い。
+- emptyDir `github-writer-mirror`（2Gi まで）。github-writer は書き込みで、host は読み取り専用で `/var/run/github-writer/mirror` に mount する。
+- 設定 `github-writer.json`。係の ConfigMap（volume `config`）のキーで、host の `/agent/github-writer.json` と github-writer の `/etc/fraction-agents/github-writer.json` に差し込む。
+- Secret `github-writer-app`（キー `private-key.pem`）。github-writer の `/var/run/secrets/github-app` にだけ mount する。手で作る。Secret が無くても Pod は起動する。
+  同じ名前空間の 2 つの係で使うときは、係の kustomization で volume `github-writer-app` の Secret の名前を付け替える。
+- `shareProcessNamespace: false`。コンテナ同士のプロセスが見えると、鍵を隔てる意味がなくなる。
 
 ### overlay で決めるもの
 
