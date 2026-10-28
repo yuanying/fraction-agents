@@ -1,7 +1,7 @@
 # 0028. 脆弱性への対応の係（vuln-responder）: 分析して VEX の注釈を PR で出す
 
 - Date: 2026-10-27
-- Status: Accepted
+- Status: Accepted（2026-10-28 に直す PR を有効にした。「直す PR を有効にした」の節）
 
 ## Context
 
@@ -130,6 +130,43 @@
 - `workspace` の worktree は `repositories` の全部に作られる。リポジトリが多くなれば、対象のリポジトリだけに作るよう command を直す。
 - AGENTS.md の「直す PR はまだ出さない」を改め、直す PR の作り方（依存の更新の仕方、テストを走らせられないこと、PR の本文）を書く。
 - 集計役の依頼の `mode` を `fix` にする。
+
+### 直す PR を有効にした（2026-10-28）
+
+上の「直す PR を有効にするとき」に沿って、係の側を次のように変えた。環境の側（overlay の `github-writer.json`、版、
+集計役の `mode`）は別に変える。
+
+- **書ける先**: github-writer の設定の例を、App をインストールした 15 リポジトリにした。
+  - 自作のイメージのソースのリポジトリ 12 個（hshelf・tumblr-like・live・docker-nfs-server・docker-sshd・node-exporter-smartmon・
+    natsumi-sshd・cnidaria-cni・gated・vuln-tracker・fraction-agents・natsumi）は `readOnlyPaths: [".github/"]`。
+  - llm-wiki は `writablePaths: ["web/"]` と `readOnlyPaths: [".github/"]`。イメージになるのは `web/` だけである。
+  - fleet-infra は `writablePaths: ["apps/", "infrastructure/", "security/vex/"]`。`scripts/` と `secrets/` は書かせない。
+  - k8s-manifests-fraction は、cnidaria の版の場所（`porkadot.yaml` と `assets/kubernetes/manifests/addons/cnidaria/`）だけ。
+    cnidaria-cni の本番の版は、fleet-infra ではなくこのリポジトリにある。
+  - 接頭辞はどれも `vuln-responder/`。commit の名義は App の bot（`fraction-vuln-responder[bot]`）で、例にも書いた。
+    どちらも、マージですぐリリースする判定（ADR 0029）が見る。
+- **worktree は要るリポジトリにだけ作る**: `workspace.repositories` に、context の準備で worktree を作るリポジトリを書けるようにし、
+  例では fleet-infra だけにした。ほかのリポジトリは、係が bash から `workspace.ts add <dir> <owner>/<name>` で足す。
+  - 理由: 15 リポジトリ（合わせて 115MB ほど）の worktree を context ごとに全部作るのは無駄が大きい。また、どれか 1 つの
+    mirror がまだ無いだけで、すべての依頼の準備が失敗する。
+  - 道具（Pi の拡張）にせず workspace の command に足したのは、準備と同じ処理（永続の clone、context のブランチ、名義）を
+    そのまま使えるからである。bash には `PI_CODING_AGENT_DIR` と `FRACTION_AGENTS_CONTEXT_ID` がある。
+  - 前に GitHub から clone したソースが同じ場所にあれば、worktree に置き換える。読むためだけの clone で、失うものは無い。
+- **mirror の容量**: 15 リポジトリの bare の mirror は 115MB ほどで（2026-10-28 に測った。llm-wiki 56MB、natsumi 41MB）、
+  1 つ 10 秒かからずに取れる。emptyDir の 2Gi と github-writer のメモリの 512Mi は変えない。
+  起動の後の同期は設定の順に 1 つずつなので、fleet-infra を先頭に置いた。
+- **AGENTS.md**: `mode: fix` の依頼を 2 つの節で読む（解析の `triage` と、版上げの `bump`。vuln-tracker の ADR 0011）。
+  - 解析: ソースで直せるもの（lock の依存、ベースイメージ）は直す PR を出し、注釈は書かない。直せないものは注釈にする。
+    lock は、コンテナにあるツール（npm）で install のスクリプトを走らせずに更新するか、公式の情報で全体を確かめられるときだけ手で書く。
+    テストはリポジトリの README と CI に従って走らせ、走らせられなければ PR の本文に書く。
+  - 版上げ: Renovate の PR で足りればその URL を返す。足りなければ fleet-infra の版（cnidaria-cni は k8s-manifests-fraction）を上げ、
+    要らなくなる注釈を同じ PR で消す。全版を指す注釈を `fixed` にはしない。古い版が残っていても見えなくなるからである。
+  - fleet-infra の `scripts/update-*.sh` に版があり、manifest を作り直すもの（gated・vuln-tracker など）は、`scripts/` を書けないので
+    PR を出さず、上げる版と流すスクリプトを返事に書く。
+  - cnidaria-cni は `porkadot.yaml` の `addons.cnidaria.image_tag` と、render 済みの manifest のイメージの 1 行を上げる。
+    本人は porkadot の既定の版に従う方針なので、PR の本文に「一時の pin で、porkadot の既定が追いついたら外す」と書かせる。
+    apply は本人が runbook で行う。
+  - 返事の最初の行に、いちばん大事な PR の URL を書く。集計役は返事の最初の PR の URL を記録する。
 
 ## Consequences
 

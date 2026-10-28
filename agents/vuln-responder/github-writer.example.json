@@ -11,14 +11,114 @@
       "name": "fleet-infra",
       "defaultBranch": "main",
       "branchPrefix": "vuln-responder/",
-      "writablePaths": ["security/vex/"]
+      "writablePaths": ["apps/", "infrastructure/", "security/vex/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "k8s-manifests-fraction",
+      "defaultBranch": "master",
+      "branchPrefix": "vuln-responder/",
+      "writablePaths": ["porkadot.yaml", "assets/kubernetes/manifests/addons/cnidaria/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "hshelf",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "tumblr-like",
+      "defaultBranch": "master",
+      "branchPrefix": "vuln-responder/",
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "live",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "docker-nfs-server",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "docker-sshd",
+      "defaultBranch": "master",
+      "branchPrefix": "vuln-responder/",
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "node-exporter-smartmon",
+      "defaultBranch": "master",
+      "branchPrefix": "vuln-responder/",
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "natsumi-sshd",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "cnidaria-cni",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "gated",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "vuln-tracker",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "fraction-agents",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "natsumi",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "readOnlyPaths": [".github/"]
+    },
+    {
+      "owner": "yuanying",
+      "name": "llm-wiki",
+      "defaultBranch": "main",
+      "branchPrefix": "vuln-responder/",
+      "writablePaths": ["web/"],
+      "readOnlyPaths": [".github/"]
     }
   ],
   "workspace": {
     "cloneDir": "/data/repos",
     "commitIdentity": {
-      "name": "vuln-responder[bot]",
-      "email": "vuln-responder[bot]@users.noreply.github.com"
-    }
+      "name": "fraction-vuln-responder[bot]",
+      "email": "348762456+fraction-vuln-responder[bot]@users.noreply.github.com"
+    },
+    "repositories": ["yuanying/fleet-infra"]
   }
 }
