@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 
-import { latestVersionTag, planRelease } from "../.github/release/plan.ts";
+import { heldSummary, latestVersionTag, planRelease } from "../.github/release/plan.ts";
 
 const user = "OTSUKA, Yuanying";
 const renovate = "renovate[bot]";
+const vulnResponder = "fraction-vuln-responder[bot]";
 
 function git(dir: string, args: string[], author = user): string {
   return execFileSync("git", args, {
@@ -105,6 +106,82 @@ describe("planRelease", () => {
     assert.match(plan.reason, /OTSUKA, Yuanying/);
   });
 
+  it("releases the next patch when only vuln-responder committed", () => {
+    const dir = repository();
+    tag(dir, "v0.8.0");
+    commit(dir, vulnResponder, "fix(deps): update undici to v7.18.2 (CVE-2026-0001)", { "package-lock.json": "{}\n" });
+
+    const plan = planRelease(dir);
+
+    assert.equal(plan.version, "v0.8.1");
+    assert.equal(plan.held, undefined);
+    assert.equal(
+      plan.message,
+      ["v0.8.1: 依存の更新（vuln-responder）", "", "- fix(deps): update undici to v7.18.2 (CVE-2026-0001)"].join("\n"),
+    );
+  });
+
+  it("releases the next patch when Renovate and vuln-responder committed, merged from their branches", () => {
+    const dir = repository();
+    tag(dir, "v0.8.0");
+    commit(dir, renovate, "chore(deps): update node to v24.22.0", { Dockerfile: "FROM node:24.22.0-bookworm-slim\n" });
+    git(dir, ["checkout", "--quiet", "-b", "vuln-responder/vuln-src-yuanying-fraction-agents"]);
+    commit(dir, vulnResponder, "fix(deps): update undici to v7.18.2 (CVE-2026-0001)", { "package-lock.json": "{}\n" });
+    git(dir, ["checkout", "--quiet", "main"]);
+    git(dir, [
+      "merge",
+      "--quiet",
+      "--no-ff",
+      "-m",
+      "Merge pull request #2 from yuanying/vuln-responder/vuln-src-yuanying-fraction-agents",
+      "vuln-responder/vuln-src-yuanying-fraction-agents",
+    ]);
+
+    const plan = planRelease(dir);
+
+    assert.equal(plan.version, "v0.8.1");
+    assert.equal(
+      plan.message,
+      [
+        "v0.8.1: 依存の更新（Renovate・vuln-responder）",
+        "",
+        "- chore(deps): update node to v24.22.0",
+        "- fix(deps): update undici to v7.18.2 (CVE-2026-0001)",
+      ].join("\n"),
+    );
+  });
+
+  it("holds the release back and says how to release by hand when a person committed among vuln-responder's", () => {
+    const dir = repository();
+    tag(dir, "v0.8.0");
+    commit(dir, vulnResponder, "fix(deps): update undici to v7.18.2 (CVE-2026-0001)", { "package-lock.json": "{}\n" });
+    commit(dir, user, "feat(host): something new", { "src/host.ts": "export {};\n" });
+    const human = git(dir, ["rev-parse", "HEAD"]).trim();
+
+    const plan = planRelease(dir);
+
+    assert.equal(plan.version, undefined);
+    assert.match(plan.reason, /OTSUKA, Yuanying/);
+    assert.deepEqual(plan.held?.commits, [{ sha: human, author: user, subject: "feat(host): something new" }]);
+    assert.equal(plan.held?.version, "v0.8.1");
+    assert.equal(plan.held?.sha, human);
+  });
+
+  it("writes the held commits and the command to release by hand as a summary", () => {
+    const summary = heldSummary("v0.8.0 から人のコミットがある", {
+      version: "v0.8.1",
+      sha: "0123456789abcdef0123456789abcdef01234567",
+      commits: [
+        { sha: "fedcba9876543210fedcba9876543210fedcba98", author: user, subject: "feat(host): something new" },
+      ],
+    });
+
+    assert.match(summary, /v0\.8\.0 から人のコミットがある/);
+    assert.match(summary, /fedcba9 .*OTSUKA, Yuanying.*feat\(host\): something new/);
+    assert.match(summary, /git tag -a v0\.8\.1 0123456789abcdef0123456789abcdef01234567 -m /);
+    assert.match(summary, /git push origin v0\.8\.1/);
+  });
+
   it("releases nothing when Renovate changed only .github/ and renovate.json", () => {
     const dir = repository();
     tag(dir, "v0.8.0");
@@ -150,6 +227,37 @@ describe("planRelease", () => {
     commit(dir, renovate, "chore(deps): update node to v24.22.0", { Dockerfile: "FROM node:24.22.0-bookworm-slim\n" });
 
     assert.equal(planRelease(dir).version, "v0.8.1");
+  });
+
+  it("releases nothing when a later commit was already released, as when a run waited for another", () => {
+    const dir = repository();
+    tag(dir, "v0.8.0");
+    commit(dir, vulnResponder, "fix(deps): update undici to v7.18.2 (CVE-2026-0001)", { "package-lock.json": "{}\n" });
+    const merged = git(dir, ["rev-parse", "HEAD"]).trim();
+    commit(dir, user, "feat(host): something new", { "src/host.ts": "export {};\n" });
+    tag(dir, "v0.8.1");
+    git(dir, ["checkout", "--quiet", "--detach", merged]);
+
+    const plan = planRelease(dir);
+
+    assert.equal(plan.version, undefined);
+    assert.equal(plan.held, undefined);
+    assert.match(plan.reason, /v0\.8\.1/);
+  });
+
+  it("releases nothing when the next version is already a tag elsewhere", () => {
+    const dir = repository();
+    tag(dir, "v0.8.0");
+    git(dir, ["checkout", "--quiet", "-b", "elsewhere"]);
+    commit(dir, user, "fix: elsewhere", { "src/host.ts": "export {};\n" });
+    tag(dir, "v0.8.1");
+    git(dir, ["checkout", "--quiet", "main"]);
+    commit(dir, vulnResponder, "fix(deps): update undici to v7.18.2 (CVE-2026-0001)", { "package-lock.json": "{}\n" });
+
+    const plan = planRelease(dir);
+
+    assert.equal(plan.version, undefined);
+    assert.match(plan.reason, /v0\.8\.1/);
   });
 
   it("releases nothing when there is no vX.Y.Z tag", () => {

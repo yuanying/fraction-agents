@@ -35,6 +35,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0026. main への push ごとに image を `main` のタグで出し、外れた版を消す](docs/adr/0026-push-main-images-for-vulnerability-tracking.md)
 - [0027. GitHub への書き込みを、App の鍵を持つ sidecar に代行させる](docs/adr/0027-github-writer-sidecar.md)
 - [0028. 脆弱性への対応の係（vuln-responder）: 分析して VEX の注釈を PR で出す](docs/adr/0028-vuln-responder.md)
+- [0029. vuln-responder の直しの PR がマージされたら、すぐ次のパッチ版を出す](docs/adr/0029-release-vulnerability-fixes-on-merge.md)
 
 ## 汎用ホスト
 
@@ -962,5 +963,7 @@ tag `v<版>` を push すると、GitHub Actions が `ghcr.io/yuanying/fraction-
 deep research の係の `ghcr.io/yuanying/fraction-agents-deep-researcher:<版>`（target `deep-researcher`）を build して push する。
 PR では build だけを確かめる。初めて push した package は private で作られるので、GitHub の画面で public にする。
 
-週に一度（月曜 09:00 JST）、前回の `vX.Y.Z` の tag からのコミットが Renovate のものだけで、`.github/` と `renovate.json` のほかに変更があれば、
+週に一度（月曜 09:00 JST）、前回の `vX.Y.Z` の tag からのコミットが Renovate か vuln-responder のものだけで、`.github/` と `renovate.json` のほかに変更があれば、
 `release` のワークフローが image を push してから、次のパッチ版の注釈つきの tag を打つ（ADR 0024）。人のコミットが入っていれば何もしない。
+`vuln-responder/` で始まるブランチの PR が `main` にマージされたときも、そのマージコミットで同じ判定をして、すぐに出す（ADR 0029）。
+人のコミットで止まったときは、その run の job summary に、止めたコミットと手で出すコマンドが出る。

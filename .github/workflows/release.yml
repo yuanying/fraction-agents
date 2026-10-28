@@ -1,6 +1,11 @@
 # Once a week, releases the next patch version when every commit since the latest vX.Y.Z tag, merge commits aside,
-# is Renovate's and they changed something outside .github/ and renovate.json (ADR 0024). .github/release/plan.ts
-# decides it and logs why; otherwise the run ends without a release, and the release is left to a tag pushed by hand.
+# is Renovate's or vuln-responder's and they changed something outside .github/ and renovate.json (ADR 0024).
+# .github/release/plan.ts decides it and logs why; otherwise the run ends without a release, and the release is left to
+# a tag pushed by hand.
+#
+# The same release runs as soon as a pull request from a vuln-responder/ branch of this repository is merged into
+# main, on the merge commit, so that a vulnerability fix reaches an image without waiting for the week (ADR 0029).
+# When a person's commits hold it back, the job summary lists them with the commands to release by hand.
 #
 # The images are pushed by image.yml before the tag is pushed, so a failed push leaves no tag behind.
 # A tag pushed by hand still releases through image.yml as before.
@@ -10,16 +15,31 @@ on:
   schedule:
     - cron: "0 0 * * 1" # Monday 09:00 JST
   workflow_dispatch:
+  pull_request:
+    types: [closed]
+    branches: [main]
 
 permissions: {}
 
+# Releases run one at a time. A closed pull request that releases nothing stays out of the group, so that it does not
+# take the place of a release waiting there.
 concurrency:
-  group: release
+  group: >-
+    ${{ (github.event_name != 'pull_request'
+      || (github.event.pull_request.merged
+        && startsWith(github.event.pull_request.head.ref, 'vuln-responder/')
+        && github.event.pull_request.head.repo.full_name == github.repository))
+      && 'release' || format('release-skip-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:
   plan:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name != 'pull_request' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'pull_request'
+        && github.event.pull_request.merged
+        && startsWith(github.event.pull_request.head.ref, 'vuln-responder/')
+        && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -27,9 +47,12 @@ jobs:
     outputs:
       version: ${{ steps.plan.outputs.version }}
       message: ${{ steps.plan.outputs.message }}
+      # The commit to release: the merge commit of the pull request, or the HEAD of main the schedule ran on.
+      sha: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v7
@@ -47,6 +70,7 @@ jobs:
     uses: ./.github/workflows/image.yml
     with:
       version: ${{ needs.plan.outputs.version }}
+      ref: ${{ needs.plan.outputs.sha }}
 
   tag:
     needs: [plan, image]
@@ -55,15 +79,16 @@ jobs:
     permissions:
       contents: write
     steps:
-      # An annotated tag, as the tags pushed by hand are, on the commit the images were built from: github.sha is the
-      # same in every job of this run.
+      # An annotated tag, as the tags pushed by hand are, on the commit the plan looked at and the images were built
+      # from.
       - env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.plan.outputs.version }}
           MESSAGE: ${{ needs.plan.outputs.message }}
+          SHA: ${{ needs.plan.outputs.sha }}
         run: |
           object="$(gh api "repos/$GITHUB_REPOSITORY/git/tags" -f tag="$VERSION" -f message="$MESSAGE" \
-            -f object="$GITHUB_SHA" -f type=commit \
+            -f object="$SHA" -f type=commit \
             -f 'tagger[name]=github-actions[bot]' \
             -f 'tagger[email]=41898282+github-actions[bot]@users.noreply.github.com' --jq .sha)"
           gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$VERSION" -f sha="$object"
