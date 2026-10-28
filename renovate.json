@@ -1,12 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "A version is proposed only once it has been public for two days, so that a release pulled or fixed in its first days never reaches a branch. internalChecksFilter is already strict by default; it is stated so that the wait is read here as holding back the branch and the pull request themselves, not only a status check on them",
-  "extends": ["config:recommended", ":semanticCommitTypeAll(chore)"],
-  "timezone": "Asia/Tokyo",
-  "dependencyDashboard": true,
-  "minimumReleaseAge": "2 days",
-  "internalChecksFilter": "strict",
-  "platformAutomerge": false,
+  "description": "The patch, digest and pinning updates Renovate merges wait for the test workflow (type check, tests, build, the manifests rendered) and the image workflow (all four images built), which run on every pull request whatever it changes. What is merged this way reaches a release on its own through the weekly release (ADR 0024)",
+  "extends": ["github>yuanying/renovate-config", "github>yuanying/renovate-config:automerge-patch"],
   "customManagers": [
     {
       "description": "The Node of the images' base is read as a Node release rather than as a Docker tag. A tag such as 24.12.0-bookworm-slim is pushed again each time its Debian layer is rebuilt, so its time is not when that Node came out, and Docker Hub does not always give a time at all; without one, the two-day wait holds the image back for good while setup-node moves on alone. Read from the Node releases, both carry the same time and so are let through on the same day. The variant after the version is kept as written",
@@ -33,19 +28,6 @@
       "groupName": "node"
     },
     {
-      "description": "The official ubuntu image is proposed without the two-day wait. Docker Hub gives a tag's last push as its release time, and the official ubuntu tags are pushed again every day or two, so a tag would rarely look two days old and its updates would hardly ever be proposed. No image here is built on ubuntu today; the rule is kept so that one added later does not fall into the same trap. Docker Hub names are matched as written, so each way of writing the image is listed. The pull request's checks still have to pass",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": [
-        "ubuntu",
-        "library/ubuntu",
-        "docker.io/ubuntu",
-        "docker.io/library/ubuntu",
-        "index.docker.io/ubuntu",
-        "index.docker.io/library/ubuntu"
-      ],
-      "minimumReleaseAge": null
-    },
-    {
       "description": "The same Node is read by the custom manager above, from the Node releases. Left on, the dockerfile manager would propose it a second time under the Docker tag's times",
       "matchManagers": ["dockerfile"],
       "matchDepNames": ["node"],
@@ -61,11 +43,6 @@
       "description": "The images named in the manifests are this repository's own. The manifests are a remote base, and the tag is chosen by the environment's overlay (ADR 0010), so the repository holding that overlay is where Renovate moves it. The kustomizations name them without a tag today, which Renovate already skips; this keeps them out should a tag ever be written here",
       "matchPackageNames": ["ghcr.io/yuanying/fraction-agents", "ghcr.io/yuanying/fraction-agents-*"],
       "enabled": false
-    },
-    {
-      "description": "Patch, digest and pinning updates are merged by Renovate itself once the pull request's checks pass: the test workflow (type check, tests, build, the manifests rendered) and the image workflow (all four images built), which run on every pull request whatever it changes. platformAutomerge is off so that the merge waits for those checks without relying on the repository's auto-merge setting or branch protection. Minor and major updates only open a pull request. What is merged this way reaches a release on its own through the weekly release (ADR 0024)",
-      "matchUpdateTypes": ["patch", "digest", "pin", "pinDigest"],
-      "automerge": true
     },
     {
       "description": "Workflows are already read by the github-actions manager. Grouping them keeps a handful of actions from arriving as a handful of pull requests, since they are updated together and reviewed the same way. The Node of setup-node stays in the node group",
