@@ -743,7 +743,9 @@ Pod の中の収集係（別のコンテナ）が、`news.json` の情報源（R
 ## 脆弱性への対応の係
 
 `agents/vuln-responder/` に、脆弱性への対応の係の agentDir の中身の雛形と、汎用ホストの設定の例を置く（ADR 0028）。
-脆弱性の集計役（vuln-tracker）から対象ごとの脆弱性の一覧を受け、分析して、fleet-infra の `security/vex/` に OpenVEX の注釈の PR を出す。
+脆弱性の集計役（vuln-tracker）から対象ごとの脆弱性の一覧を受け、分析して、直せるものはソースのリポジトリに直す PR を、
+直った版が出たものは fleet-infra（cnidaria-cni は k8s-manifests-fraction）に版上げの PR を、直せないものは fleet-infra の `security/vex/` に
+OpenVEX の注釈の PR を出す（直す PR と版上げは依頼の `mode` が `fix` のときだけ）。
 GitHub には github-writer（ADR 0027）を通してだけ書く。聞き返さず、同時に走るのは 1 件まで、1 件は最長 60 分。
 manifest は `deploy/agents/vuln-responder`。鍵は Secret `vuln-responder-github-app` に手で置く。詳しくは `agents/vuln-responder/README.md`。
 

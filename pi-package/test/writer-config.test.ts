@@ -87,6 +87,25 @@ describe("github-writer settings", () => {
     assert.throws(() => parseWriterConfig({ ...MINIMAL, workspace: { cloneDir: "/data/repos" } }), /workspace\.commitIdentity must be an object/);
   });
 
+  it("reads which repositories every context gets a worktree of", () => {
+    const identity = { name: "vuln-responder[bot]", email: "bot@example.test" };
+    const two = {
+      ...MINIMAL,
+      repositories: [...MINIMAL.repositories, { owner: "yuanying", name: "hshelf", branchPrefix: "vuln-responder/" }],
+    };
+    assert.equal(parseWriterConfig({ ...two, workspace: { cloneDir: "/data/repos", commitIdentity: identity } }).workspace?.repositories, undefined);
+    const config = parseWriterConfig({ ...two, workspace: { cloneDir: "/data/repos", commitIdentity: identity, repositories: ["Yuanying/Fleet-Infra"] } });
+    assert.deepEqual(config.workspace?.repositories, ["Yuanying/Fleet-Infra"]);
+    assert.throws(
+      () => parseWriterConfig({ ...two, workspace: { cloneDir: "/data/repos", commitIdentity: identity, repositories: ["yuanying/llm-wiki"] } }),
+      /workspace\.repositories: yuanying\/llm-wiki is not one of the repositories/,
+    );
+    assert.throws(
+      () => parseWriterConfig({ ...two, workspace: { cloneDir: "/data/repos", commitIdentity: identity, repositories: "yuanying/fleet-infra" } }),
+      /workspace\.repositories must be a list of owner\/name/,
+    );
+  });
+
   it("refuses a relative mirror directory or key file, and a bad port", () => {
     assert.throws(() => parseWriterConfig({ ...MINIMAL, mirrorDir: "mirror" }), /mirrorDir must be an absolute path/);
     assert.throws(() => parseWriterConfig({ ...MINIMAL, app: { ...MINIMAL.app, privateKeyFile: "key.pem" } }), /app\.privateKeyFile must be an absolute path/);

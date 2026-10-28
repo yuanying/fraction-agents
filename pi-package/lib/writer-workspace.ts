@@ -4,12 +4,14 @@ import { pathToFileURL } from "node:url";
 
 import { git, runGit } from "./git.ts";
 import { checkContextId } from "./workspace.ts";
-import { mirrorPath, type WriterConfig, type WriterRepository, type WriterWorkspace } from "./writer-config.ts";
+import { findRepository, mirrorPath, type WriterConfig, type WriterRepository, type WriterWorkspace } from "./writer-config.ts";
 
 // The context's workspace with the GitHub writer (ADR 0028). Like the GitHub gate's (ADR 0009), a persistent clone
 // of each repository lives on the volume and every context works on worktrees of it; here the clones follow the
 // sidecar's read-only mirrors, so they need no credentials. The context's directory holds one worktree per
-// repository, at <owner>/<name>, so that the agent can clone other repositories beside them.
+// repository, at <owner>/<name>, so that the agent can clone other repositories beside them. Only the repositories
+// of `workspace.repositories` are made ready with the context; the agent adds a worktree of another when it is to
+// change it (ADR 0028, the fixes), so that a context does not check out every repository the writer may write to.
 
 function settings(config: WriterConfig): WriterWorkspace {
   if (!config.workspace) throw new Error("github-writer.json has no workspace (cloneDir and commitIdentity), so contexts get no worktrees.");
@@ -46,37 +48,64 @@ async function ensureClone(config: WriterConfig, workspace: WriterWorkspace, rep
   return clone;
 }
 
-async function isWorktreeRoot(dir: string): Promise<boolean> {
+/** Whether `dir` is the root of a worktree of `clone` (and not, say, a clone of the repository made from GitHub). */
+async function isWorktreeOf(dir: string, clone: string): Promise<boolean> {
   if (!existsSync(join(dir, ".git"))) return false;
   const top = await runGit(dir, ["rev-parse", "--show-toplevel"]);
-  return top.code === 0 && top.stdout === realpathSync(dir);
+  if (top.code !== 0 || top.stdout !== realpathSync(dir)) return false;
+  const common = await runGit(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  return common.code === 0 && common.stdout === realpathSync(clone);
 }
 
 /**
- * Readies the context's directory: a worktree of each repository. A worktree that is there is left as it is, so a
- * context picks up where it stopped. A lost one is made again on the context's branch, or on a new branch from the
- * latest default branch.
+ * Makes the context's worktree of the repository, or keeps the one that is there. A lost one is made again on the
+ * context's branch, or on a new branch from the latest default branch.
+ */
+async function ensureWorktree(config: WriterConfig, workspace: WriterWorkspace, dir: string, contextId: string, repository: WriterRepository): Promise<string> {
+  const clone = await ensureClone(config, workspace, repository);
+  const worktree = worktreePath(dir, repository);
+  if (await isWorktreeOf(worktree, clone)) return worktree;
+  rmSync(worktree, { recursive: true, force: true });
+  await git(clone, ["worktree", "prune"]);
+  mkdirSync(dirname(worktree), { recursive: true });
+  const branch = `${repository.branchPrefix}${contextId}`;
+  const exists = (await runGit(clone, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`])).code === 0;
+  if (exists) {
+    await git(clone, ["worktree", "add", "--quiet", worktree, branch]);
+  } else {
+    await git(clone, ["worktree", "add", "--quiet", "--no-track", "-b", branch, worktree, `origin/${repository.defaultBranch}`]);
+  }
+  return worktree;
+}
+
+/**
+ * Readies the context's directory: a worktree of each repository of `workspace.repositories` (of every repository
+ * when it is left out). A worktree that is there is left as it is, so a context picks up where it stopped.
  */
 export async function prepareWriterWorkspace(options: { config: WriterConfig; dir: string; contextId: string }): Promise<void> {
   const { config, dir } = options;
   const workspace = settings(config);
   const contextId = checkContextId(options.contextId);
   mkdirSync(dir, { recursive: true });
-  for (const repository of config.repositories) {
-    const clone = await ensureClone(config, workspace, repository);
-    const worktree = worktreePath(dir, repository);
-    if (await isWorktreeRoot(worktree)) continue;
-    rmSync(worktree, { recursive: true, force: true });
-    await git(clone, ["worktree", "prune"]);
-    mkdirSync(dirname(worktree), { recursive: true });
-    const branch = `${repository.branchPrefix}${contextId}`;
-    const exists = (await runGit(clone, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`])).code === 0;
-    if (exists) {
-      await git(clone, ["worktree", "add", "--quiet", worktree, branch]);
-    } else {
-      await git(clone, ["worktree", "add", "--quiet", "--no-track", "-b", branch, worktree, `origin/${repository.defaultBranch}`]);
-    }
+  const repositories =
+    workspace.repositories === undefined ? config.repositories : workspace.repositories.map((name) => findRepository(config, name)!);
+  for (const repository of repositories) await ensureWorktree(config, workspace, dir, contextId, repository);
+}
+
+/**
+ * Adds the context's worktree of one more of the writer's repositories (`owner/name`), at <owner>/<name> in the
+ * context's directory, the same way as those made with the context. Returns where it is.
+ */
+export async function addWriterWorktree(options: { config: WriterConfig; dir: string; contextId: string; repository: string }): Promise<string> {
+  const { config, dir } = options;
+  const workspace = settings(config);
+  const contextId = checkContextId(options.contextId);
+  const repository = findRepository(config, options.repository);
+  if (!repository) {
+    throw new Error(`${options.repository} is not one of the repositories: ${config.repositories.map((r) => `${r.owner}/${r.name}`).join(", ")}.`);
   }
+  mkdirSync(dir, { recursive: true });
+  return ensureWorktree(config, workspace, dir, contextId, repository);
 }
 
 /** Removes the context's worktrees and its local branches. What was pushed stays on GitHub. */

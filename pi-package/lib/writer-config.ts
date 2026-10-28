@@ -43,11 +43,16 @@ export interface WriterConfig {
 
 /**
  * The context's workspace with the GitHub writer (ADR 0028): a persistent clone of each repository's mirror under
- * `cloneDir`, and a worktree of each in every context, committing as `commitIdentity`.
+ * `cloneDir`, and worktrees of them in the contexts, committing as `commitIdentity`.
  */
 export interface WriterWorkspace {
   cloneDir: string;
   commitIdentity: { name: string; email: string };
+  /**
+   * The repositories (`owner/name`) every context gets a worktree of when it is prepared. The others get one when the
+   * agent adds it (`workspace.ts add`). Every repository when left out.
+   */
+  repositories?: string[];
 }
 
 /** The file name of the settings: in the agent directory for the extension, mounted beside it for the sidecar. */
@@ -94,19 +99,34 @@ export function parseWriterConfig(input: unknown): WriterConfig {
     syncIntervalSeconds: root.syncIntervalSeconds === undefined ? 300 : positive(root.syncIntervalSeconds, "syncIntervalSeconds"),
     maxBundleBytes: root.maxBundleBytes === undefined ? 50 * 1024 * 1024 : positive(root.maxBundleBytes, "maxBundleBytes"),
     repositories,
-    ...(root.workspace === undefined ? {} : { workspace: workspace(root.workspace) }),
+    ...(root.workspace === undefined ? {} : { workspace: workspace(root.workspace, repositories) }),
   };
 }
 
-function workspace(input: unknown): WriterWorkspace {
+/** The repository of the settings named `owner/name`, in any case. */
+export function findRepository(config: Pick<WriterConfig, "repositories">, fullName: string): WriterRepository | undefined {
+  return config.repositories.find((repository) => `${repository.owner}/${repository.name}`.toLowerCase() === fullName.toLowerCase());
+}
+
+function workspace(input: unknown, repositories: WriterRepository[]): WriterWorkspace {
   const value = record(input, "workspace");
   const identity = record(value.commitIdentity, "workspace.commitIdentity");
+  let prepared: string[] | undefined;
+  if (value.repositories !== undefined) {
+    if (!Array.isArray(value.repositories) || value.repositories.some((item) => typeof item !== "string" || !item.includes("/"))) {
+      throw new Error("github-writer: workspace.repositories must be a list of owner/name");
+    }
+    prepared = value.repositories as string[];
+    const unknown = prepared.find((item) => findRepository({ repositories }, item) === undefined);
+    if (unknown !== undefined) throw new Error(`github-writer: workspace.repositories: ${unknown} is not one of the repositories`);
+  }
   return {
     cloneDir: absolute(value, "cloneDir", "workspace.cloneDir"),
     commitIdentity: {
       name: text(identity, "name", "workspace.commitIdentity.name"),
       email: text(identity, "email", "workspace.commitIdentity.email"),
     },
+    ...(prepared === undefined ? {} : { repositories: prepared }),
   };
 }
 

@@ -517,25 +517,92 @@ describe("github-writer: without the App's key", () => {
 
 // The settings vuln-responder starts with (ADR 0028): it may write VEX documents to fleet-infra and nothing else.
 describe("vuln-responder's github-writer settings", () => {
-  const example = JSON.parse(readFileSync(new URL("../../agents/vuln-responder/github-writer.example.json", import.meta.url), "utf8"));
+  const config: WriterConfig = parseWriterConfig(
+    JSON.parse(readFileSync(new URL("../../agents/vuln-responder/github-writer.example.json", import.meta.url), "utf8")),
+  );
+  const repository = (name: string) => {
+    const found = config.repositories.find((r) => r.owner === "yuanying" && r.name === name);
+    assert.ok(found, `yuanying/${name} is in the example`);
+    return found;
+  };
+  const allows = (name: string, path: string, status = "M") => checkRepositoryChanges([{ status, path }], repository(name)).length === 0;
+  const SOURCES = [
+    "hshelf",
+    "tumblr-like",
+    "live",
+    "docker-nfs-server",
+    "docker-sshd",
+    "node-exporter-smartmon",
+    "natsumi-sshd",
+    "cnidaria-cni",
+    "gated",
+    "vuln-tracker",
+    "fraction-agents",
+    "natsumi",
+  ];
 
-  it("allow security/vex/ of fleet-infra only, on vuln-responder/ branches", () => {
-    const config = parseWriterConfig(example);
+  it("lists the 15 repositories the App is installed on, each on branches starting with vuln-responder/", () => {
     assert.deepEqual(
-      config.repositories.map((r) => ({ repository: `${r.owner}/${r.name}`, prefix: r.branchPrefix, writable: r.writablePaths })),
-      [{ repository: "yuanying/fleet-infra", prefix: "vuln-responder/", writable: ["security/vex/"] }],
+      config.repositories.map((r) => r.name).sort(),
+      [...SOURCES, "llm-wiki", "fleet-infra", "k8s-manifests-fraction"].sort(),
     );
+    for (const r of config.repositories) {
+      assert.equal(r.owner, "yuanying");
+      assert.equal(r.branchPrefix, "vuln-responder/");
+    }
+    // The mirrors are made in this order when the sidecar starts: fleet-infra, which every context needs, first.
+    assert.equal(config.repositories[0]?.name, "fleet-infra");
     assert.deepEqual(config.app, { appId: "5493557", installationId: "175776468", privateKeyFile: "/var/run/secrets/github-app/private-key.pem" });
     assert.equal(config.mirrorDir, "/var/run/github-writer/mirror");
     assert.equal(config.workspace?.cloneDir, "/data/repos");
   });
 
-  it("make the writer refuse a change outside security/vex/, and take one inside", () => {
-    const [fleet] = parseWriterConfig(example).repositories as [WriterRepository];
-    const vex = { status: "A", path: "security/vex/ghcr.io/yuanying/hshelf.openvex.json" };
-    assert.deepEqual(checkRepositoryChanges([vex, { status: "M", path: "security/vex/index.docker.io/longhornio/longhorn-engine.openvex.json" }], fleet), []);
-    for (const path of ["apps/fraction-agents/kustomization.yaml", ".github/workflows/test.yml", "scripts/check-vex.sh", "security/vex-other/a.json"]) {
-      assert.match(checkRepositoryChanges([vex, { status: "M", path }], fleet).join("\n"), /only files under security\/vex\/ may be changed/, path);
+  it("names each repository's default branch", () => {
+    const master = ["tumblr-like", "docker-sshd", "node-exporter-smartmon", "k8s-manifests-fraction"];
+    for (const r of config.repositories) assert.equal(r.defaultBranch, master.includes(r.name) ? "master" : "main", r.name);
+  });
+
+  it("lets the sources be fixed anywhere but .github/", () => {
+    for (const name of SOURCES) {
+      assert.ok(allows(name, "Gemfile.lock"), name);
+      assert.ok(allows(name, "Dockerfile"), name);
+      assert.ok(allows(name, "go.sum"), name);
+      assert.ok(!allows(name, ".github/workflows/release.yaml"), name);
+      assert.ok(!allows(name, ".github/renovate.json", "A"), name);
     }
+  });
+
+  it("lets llm-wiki be fixed under web/ only", () => {
+    assert.ok(allows("llm-wiki", "web/package-lock.json"));
+    assert.ok(allows("llm-wiki", "web/Dockerfile"));
+    assert.ok(!allows("llm-wiki", "wiki/index.md"));
+    assert.ok(!allows("llm-wiki", "README.md"));
+    assert.ok(!allows("llm-wiki", ".github/workflows/web.yaml"));
+  });
+
+  it("lets fleet-infra take versions in apps/ and infrastructure/ and annotations in security/vex/, nothing else", () => {
+    assert.ok(allows("fleet-infra", "apps/aphrael/base/kustomization.yaml"));
+    assert.ok(allows("fleet-infra", "infrastructure/longhorn/base/src/values.yaml"));
+    assert.ok(allows("fleet-infra", "security/vex/ghcr.io/yuanying/hshelf.openvex.json", "A"));
+    assert.ok(!allows("fleet-infra", "secrets/prod/kube-prometheus.enc.yaml"));
+    assert.ok(!allows("fleet-infra", "scripts/update-gated.sh"));
+    assert.ok(!allows("fleet-infra", "renovate.json"));
+    assert.ok(!allows("fleet-infra", ".github/workflows/ci.yaml"));
+  });
+
+  it("lets k8s-manifests-fraction take cnidaria's version only", () => {
+    assert.ok(allows("k8s-manifests-fraction", "porkadot.yaml"));
+    assert.ok(allows("k8s-manifests-fraction", "assets/kubernetes/manifests/addons/cnidaria/cnidaria.yaml"));
+    assert.ok(!allows("k8s-manifests-fraction", "assets/kubernetes/manifests/addons/cnidaria-other/x.yaml"));
+    assert.ok(!allows("k8s-manifests-fraction", "assets/certs/kubernetes/ca.key"));
+    assert.ok(!allows("k8s-manifests-fraction", "assets/kubernetes/manifests/crds/cnidaria/crds.yaml"));
+  });
+
+  it("prepares a worktree of fleet-infra only, and commits as the App's bot, whose commits the releases on merge count", () => {
+    assert.deepEqual(config.workspace?.repositories, ["yuanying/fleet-infra"]);
+    assert.deepEqual(config.workspace?.commitIdentity, {
+      name: "fraction-vuln-responder[bot]",
+      email: "348762456+fraction-vuln-responder[bot]@users.noreply.github.com",
+    });
   });
 });
