@@ -5,7 +5,8 @@
 # deep-researcher target). A tag v<version> pushes all of them as <version>; a pull request only builds them, in a job
 # that cannot write packages.
 # release.yml calls this with a version as well: a tag pushed by its GITHUB_TOKEN starts no workflow, so it pushes
-# the images itself, from the commit it is about to tag, before the tag exists (ADR 0024).
+# the images itself, from the commit it is about to tag, before the tag exists (ADR 0024). That commit is given as ref,
+# since a run started by a merged pull request is not on it (ADR 0029).
 # test.yml calls this with main on every push to main, once the tests pass: all of them are pushed as main, and the
 # versions that tag leaves untagged are deleted (ADR 0026). Every pushed image carries the source repository and the
 # commit it was built from as OCI labels.
@@ -21,13 +22,19 @@ on:
         description: The version to push the images as (v1.2.3), or main.
         type: string
         required: true
+      ref:
+        description: The commit to build, when it is not the one the run is on.
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
   build:
-    if: github.event_name == 'pull_request'
+    # release.yml calls this from a closed pull request as well; that only publishes.
+    if: github.event_name == 'pull_request' && inputs.version == ''
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -73,6 +80,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - name: Name the image
         id: name
         env:
@@ -93,7 +102,7 @@ jobs:
           tags: ${{ steps.name.outputs.tag }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ inputs.ref || github.sha }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
