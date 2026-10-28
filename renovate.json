@@ -1,15 +1,15 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "A version is proposed only once it has been public for seven days, so that a release pulled or fixed in its first week never reaches a branch. internalChecksFilter is already strict by default; it is stated so that the wait is read here as holding back the branch and the pull request themselves, not only a status check on them",
+  "description": "A version is proposed only once it has been public for two days, so that a release pulled or fixed in its first days never reaches a branch. internalChecksFilter is already strict by default; it is stated so that the wait is read here as holding back the branch and the pull request themselves, not only a status check on them",
   "extends": ["config:recommended", ":semanticCommitTypeAll(chore)"],
   "timezone": "Asia/Tokyo",
   "dependencyDashboard": true,
-  "minimumReleaseAge": "7 days",
+  "minimumReleaseAge": "2 days",
   "internalChecksFilter": "strict",
   "platformAutomerge": false,
   "customManagers": [
     {
-      "description": "The Node of the images' base is read as a Node release rather than as a Docker tag. A tag such as 24.12.0-bookworm-slim is pushed again each time its Debian layer is rebuilt, so its time is not when that Node came out, and Docker Hub does not always give a time at all; without one, the seven-day wait holds the image back for good while setup-node moves on alone. Read from the Node releases, both carry the same time and so are let through on the same day. The variant after the version is kept as written",
+      "description": "The Node of the images' base is read as a Node release rather than as a Docker tag. A tag such as 24.12.0-bookworm-slim is pushed again each time its Debian layer is rebuilt, so its time is not when that Node came out, and Docker Hub does not always give a time at all; without one, the two-day wait holds the image back for good while setup-node moves on alone. Read from the Node releases, both carry the same time and so are let through on the same day. The variant after the version is kept as written",
       "customType": "regex",
       "managerFilePatterns": ["/^Dockerfile$/"],
       "matchStrings": ["FROM node:(?<currentValue>\\d+\\.\\d+\\.\\d+)-"],
@@ -31,6 +31,19 @@
       "matchDepNames": ["node"],
       "matchManagers": ["custom.regex", "github-actions"],
       "groupName": "node"
+    },
+    {
+      "description": "The official ubuntu image is proposed without the two-day wait. Docker Hub gives a tag's last push as its release time, and the official ubuntu tags are pushed again every day or two, so a tag would rarely look two days old and its updates would hardly ever be proposed. No image here is built on ubuntu today; the rule is kept so that one added later does not fall into the same trap. Docker Hub names are matched as written, so each way of writing the image is listed. The pull request's checks still have to pass",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": [
+        "ubuntu",
+        "library/ubuntu",
+        "docker.io/ubuntu",
+        "docker.io/library/ubuntu",
+        "index.docker.io/ubuntu",
+        "index.docker.io/library/ubuntu"
+      ],
+      "minimumReleaseAge": null
     },
     {
       "description": "The same Node is read by the custom manager above, from the Node releases. Left on, the dockerfile manager would propose it a second time under the Docker tag's times",
