@@ -10,10 +10,10 @@ import express, { type NextFunction, type Request, type Response } from "express
 
 import { agentCardJson, buildAgentCard } from "./agent-card.ts";
 import { Artifacts } from "./artifacts.ts";
-import { authenticate, type TokenReviewer } from "./auth.ts";
+import { authenticateCaller, type TokenReviewer } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { PiAgentExecutor } from "./executor.ts";
-import { AssertionVerifier, audienceOf } from "./gated-assertion.ts";
+import { ASSERTION_HEADER, AssertionVerifier, audienceOf } from "./gated-assertion.ts";
 import { ContextGuardHandler } from "./handler.ts";
 import { MAX_REQUEST_BYTES } from "./inbox.ts";
 import { Replies } from "./reply.ts";
@@ -137,6 +137,15 @@ export function createHost(options: HostOptions): Host {
     now,
   );
 
+  // gated's assertions of ServiceAccounts, for this agent's own host name (ADR 0030).
+  const verifier = config.gated
+    ? new AssertionVerifier({
+        issuer: config.gated.issuer,
+        jwksUrl: config.gated.jwksUrl,
+        audience: audienceOf(config.publicUrl),
+        allowedSubjects: config.allowedCallers,
+      })
+    : undefined;
   const callers = new WeakMap<Request, string>();
   const app = express();
   app.disable("x-powered-by");
@@ -149,9 +158,10 @@ export function createHost(options: HostOptions): Host {
     res.json(card);
   });
   app.use(async (req, res, next) => {
-    const result = await authenticate(req.headers.authorization, tokenReviewer, config.allowedCallers);
+    const credentials = { authorization: req.headers.authorization, assertion: req.get(ASSERTION_HEADER) };
+    const result = await authenticateCaller(credentials, tokenReviewer, config.allowedCallers, verifier);
     if (!result.ok) {
-      console.log(`refused ${req.method} ${req.path}: ${result.reason}`);
+      console.log(`refused ${req.method} ${req.path}: ${result.detail ?? result.reason}`);
       if (result.status === 401) res.setHeader("WWW-Authenticate", 'Bearer realm="a2a"');
       res.status(result.status).json({ error: result.reason });
       return;

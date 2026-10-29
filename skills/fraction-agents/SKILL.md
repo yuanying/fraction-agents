@@ -41,8 +41,10 @@ token は、クラスタの外からエージェントを呼ぶための資格�
 - `--auth`、`--svc-param Authorization=...`、`A2ACLI_AUTH=... a2a ...` のように、token をコマンド行に書かない。
 - token のファイルを `cat` しない。`A2ACLI_AUTH` を `echo` しない。token を会話・ファイル・コミットに書き写さない。
 - `agent.mjs` が token のファイルの権限を理由に断ったら、自分で直さず、ユーザーに伝える。
-- 認証の失敗（`unauthenticated`、401、403）が続くときは、token の期限切れか、そのエージェントが自分を受け付けていない。
-  ユーザーに token の発行し直しを頼む。自分で `kubectl create token` を実行しない。
+- token の audience は、呼ぶ URL で決まる。gated を通る係のホスト名には gated の audience の token、Service を直接呼ぶなら `a2a` の token である（README の「token を発行する」）。
+- 認証の失敗（`unauthenticated`、401、403）が続くときは、token の期限切れ、token の audience が URL に合っていない、
+  呼ぶ係がまだ gated の audience の token を受け付けていない、そのエージェントが自分を受け付けていない、のどれかである。
+  ユーザーに伝え、token の発行し直しや係の設定の確認を頼む。自分で `kubectl create token` を実行しない。
 
 ## エージェントの一覧を見る
 
@@ -254,7 +256,7 @@ agent deep-researcher report delete <taskId>
 | 終了コード | 意味 |
 |---|---|
 | 0 | できた |
-| 1 | 係が断った。「not found」は、無い ID・消した後・他の呼び出し元のもの（`get` では、他の呼び出し元のレポートを読めないとき。`delete` では、読める場合も）・レポートを保存しない係のどれか（区別されない）。401・403 は token の期限切れか、係が自分を受け付けていない（「token の扱い」に従い、ユーザーに伝える） |
+| 1 | 係が断った。「not found」は、無い ID・消した後・他の呼び出し元のもの（`get` では、他の呼び出し元のレポートを読めないとき。`delete` では、読める場合も）・レポートを保存しない係のどれか（区別されない）。401・403 は token の期限切れ、token の audience が URL に合っていない、係が自分を受け付けていない、のどれか（「token の扱い」に従い、ユーザーに伝える） |
 | 2 | 引数の誤り |
 | 3 | 係に届かない |
 

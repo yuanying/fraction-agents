@@ -20,18 +20,22 @@ export interface ContextWorkspaceConfig {
   remove: string[];
 }
 
+/** The gated whose assertions the host accepts (ADR 0021, ADR 0030). */
+export interface GatedConfig {
+  /** The issuer of the assertions accepted: the origin of gated's central authentication host. */
+  issuer: string;
+  /** Where gated publishes the keys of its assertions. Never taken from an assertion. */
+  jwksUrl: string;
+}
+
 /** The pages people read reports on (ADR 0021): a listener of their own, behind gated. */
 export interface ReportsWebConfig {
   /** The port of the listener. Not the A2A one. */
   port: number;
   /** The URL people open the pages at. The reply's link and the audience of gated's assertions come from it. */
   publicUrl: string;
-  gated: {
-    /** The issuer of the assertions accepted: the origin of gated's central authentication host. */
-    issuer: string;
-    /** Where gated publishes the keys of its assertions. Never taken from an assertion. */
-    jwksUrl: string;
-  };
+  /** The top-level `gated` when not written here. */
+  gated: GatedConfig;
   /** The subjects allowed to read, e.g. `github:<login>`. */
   allowedSubjects: string[];
 }
@@ -61,6 +65,11 @@ export interface Config {
   port: number;
   /** ServiceAccounts allowed to call, as `system:serviceaccount:<namespace>:<name>`. */
   allowedCallers: string[];
+  /**
+   * When set, the A2A listener also takes gated's assertion of a ServiceAccount, checked against `allowedCallers`,
+   * with the host name of `publicUrl` as its audience (ADR 0030). When not, it takes bearer tokens only.
+   */
+  gated?: GatedConfig;
   /** Pi's agent directory (`PI_CODING_AGENT_DIR`): AGENTS.md, settings.json, auth.json. */
   agentDir: string;
   /** Where the host keeps its state: the task database and the session files. */
@@ -112,6 +121,7 @@ export function parseConfig(input: unknown): Config {
   const dataDir = absolutePath(input, "dataDir");
   const listenPort = input.port === undefined ? 8080 : port(input.port);
   const allowedCallers = callers(input.allowedCallers);
+  const gatedConfig = input.gated === undefined ? undefined : gated(input.gated, "gated");
   return {
     name: text(input, "name"),
     description: text(input, "description"),
@@ -120,6 +130,7 @@ export function parseConfig(input: unknown): Config {
     publicUrl: url(input, "publicUrl"),
     port: listenPort,
     allowedCallers,
+    ...(gatedConfig ? { gated: gatedConfig } : {}),
     agentDir: absolutePath(input, "agentDir"),
     dataDir,
     workDir: input.workDir === undefined ? join(dataDir, "work") : absolutePath(input, "workDir"),
@@ -136,7 +147,7 @@ export function parseConfig(input: unknown): Config {
     taskTimeLimitGraceSeconds:
       input.taskTimeLimitGraceSeconds === undefined ? 300 : duration(input, "taskTimeLimitGraceSeconds"),
     ...(input.maxConcurrentTasks === undefined ? {} : { maxConcurrentTasks: count(input.maxConcurrentTasks, "maxConcurrentTasks") }),
-    ...(input.reports === undefined ? {} : { reports: reports(input.reports, dataDir, listenPort, allowedCallers) }),
+    ...(input.reports === undefined ? {} : { reports: reports(input.reports, dataDir, listenPort, allowedCallers, gatedConfig) }),
   };
 }
 
@@ -177,32 +188,48 @@ function count(value: unknown, field: string): number {
   return value;
 }
 
-function reports(value: unknown, dataDir: string, listenPort: number, allowedCallers: string[]): ReportsConfig {
+function reports(
+  value: unknown,
+  dataDir: string,
+  listenPort: number,
+  allowedCallers: string[],
+  topGated: GatedConfig | undefined,
+): ReportsConfig {
   if (!isRecord(value)) throw new Error("config: reports must be an object");
   return {
     dir: value.dir === undefined ? join(dataDir, "reports") : absolutePath(value, "dir", "reports.dir"),
     ...(value.readAllCallers === undefined ? {} : { readAllCallers: readAllCallers(value.readAllCallers, allowedCallers) }),
-    ...(value.web === undefined ? {} : { web: reportsWeb(value.web, listenPort) }),
+    ...(value.web === undefined ? {} : { web: reportsWeb(value.web, listenPort, topGated) }),
   };
 }
 
-function reportsWeb(value: unknown, listenPort: number): ReportsWebConfig {
+function reportsWeb(value: unknown, listenPort: number, topGated: GatedConfig | undefined): ReportsWebConfig {
   if (!isRecord(value)) throw new Error("config: reports.web must be an object");
   if (value.port === undefined) throw new Error("config: reports.web.port is required");
   const webPort = port(value.port, "reports.web.port");
   if (webPort === listenPort) throw new Error("config: reports.web.port must not be the A2A port");
-  if (!isRecord(value.gated)) throw new Error("config: reports.web.gated must be an object");
-  const issuer = url(value.gated, "issuer", "reports.web.gated.issuer");
-  if (new URL(issuer).origin !== issuer) throw new Error("config: reports.web.gated.issuer must be an origin, such as https://auth.example.com");
+  // One gated serves both listeners, so its issuer and keys are written once, and must agree when written twice.
+  if (value.gated === undefined && topGated === undefined) throw new Error("config: reports.web.gated is required without gated");
+  const webGated = value.gated === undefined ? topGated! : gated(value.gated, "reports.web.gated");
+  if (topGated && (webGated.issuer !== topGated.issuer || webGated.jwksUrl !== topGated.jwksUrl)) {
+    throw new Error("config: reports.web.gated must be the same as gated, or left out");
+  }
   if (value.allowedSubjects === undefined) throw new Error("config: reports.web.allowedSubjects is required");
   const allowedSubjects = stringList(value.allowedSubjects, "reports.web.allowedSubjects");
   if (allowedSubjects.length === 0) throw new Error("config: reports.web.allowedSubjects must not be empty");
   return {
     port: webPort,
     publicUrl: url(value, "publicUrl", "reports.web.publicUrl"),
-    gated: { issuer, jwksUrl: url(value.gated, "jwksUrl", "reports.web.gated.jwksUrl") },
+    gated: webGated,
     allowedSubjects,
   };
+}
+
+function gated(value: unknown, field: string): GatedConfig {
+  if (!isRecord(value)) throw new Error(`config: ${field} must be an object`);
+  const issuer = url(value, "issuer", `${field}.issuer`);
+  if (new URL(issuer).origin !== issuer) throw new Error(`config: ${field}.issuer must be an origin, such as https://auth.example.com`);
+  return { issuer, jwksUrl: url(value, "jwksUrl", `${field}.jwksUrl`) };
 }
 
 function duration(input: Record<string, unknown>, field: string): number {

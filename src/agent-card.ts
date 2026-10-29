@@ -35,7 +35,9 @@ export function buildAgentCard(config: Config): AgentCard {
           value: {
             scheme: "Bearer",
             bearerFormat: "JWT",
-            description: "A Kubernetes ServiceAccount token issued for the a2a audience.",
+            description: config.gated
+              ? "A Kubernetes ServiceAccount token issued for the a2a audience, or, through gated, one issued for gated's audience."
+              : "A Kubernetes ServiceAccount token issued for the a2a audience.",
           },
         },
       },
