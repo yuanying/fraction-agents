@@ -114,6 +114,44 @@ describe("config", () => {
     it("refuses the A2A port for the pages for people", () => {
       assert.throws(() => parseConfig({ ...minimal, port: 8081, reports: { web } }), /reports\.web\.port/);
     });
+
+    it("takes gated's issuer and keys for the pages from the top-level gated when they have none of their own", () => {
+      const { gated, ...rest } = web;
+      assert.deepEqual(parseConfig({ ...minimal, gated, reports: { web: rest } }).reports, { dir: "/data/reports", web });
+      assert.deepEqual(parseConfig({ ...minimal, gated, reports: { web } }).reports, { dir: "/data/reports", web });
+    });
+
+    it("refuses pages whose gated differs from the top-level one", () => {
+      for (const differing of [
+        { ...web.gated, issuer: "https://login.example.test" },
+        { ...web.gated, jwksUrl: "https://login.example.test/__gated/jwks.json" },
+      ]) {
+        assert.throws(
+          () => parseConfig({ ...minimal, gated: web.gated, reports: { web: { ...web, gated: differing } } }),
+          /reports\.web\.gated must be the same as gated/,
+        );
+      }
+    });
+  });
+
+  describe("gated", () => {
+    const gated = { issuer: "https://auth.example.test", jwksUrl: "https://auth.example.test/__gated/jwks.json" };
+
+    it("is not set unless written: the A2A listener takes bearer tokens only", () => {
+      assert.equal(parseConfig(minimal).gated, undefined);
+    });
+
+    it("takes the issuer and the JWKS of gated's assertions for the A2A listener", () => {
+      assert.deepEqual(parseConfig({ ...minimal, gated }).gated, gated);
+    });
+
+    it("requires an issuer that is an origin and a JWKS URL", () => {
+      assert.throws(() => parseConfig({ ...minimal, gated: true }), /gated must be an object/);
+      assert.throws(() => parseConfig({ ...minimal, gated: { jwksUrl: gated.jwksUrl } }), /gated\.issuer/);
+      assert.throws(() => parseConfig({ ...minimal, gated: { issuer: gated.issuer } }), /gated\.jwksUrl/);
+      assert.throws(() => parseConfig({ ...minimal, gated: { ...gated, issuer: "https://auth.example.test/" } }), /gated\.issuer must be an origin/);
+      assert.throws(() => parseConfig({ ...minimal, gated: { ...gated, jwksUrl: "jwks.json" } }), /gated\.jwksUrl must be a URL/);
+    });
   });
 
   it("takes the commands that prepare and remove a context's workspace", () => {

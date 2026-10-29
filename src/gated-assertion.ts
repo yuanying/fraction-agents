@@ -3,7 +3,8 @@ import { createPublicKey, verify, type KeyObject } from "node:crypto";
 /**
  * Checks the `Gated-Assertion` header gated puts on the requests of a logged-in subject (gated ADR 0034), in the
  * eight steps of fraction-agents ADR 0021. Steps 1 to 7 establish that gated authenticated the subject for this
- * host; step 8 is whether this host lets the subject in. Written on Node's own crypto: the algorithm is fixed to
+ * host; step 8 is whether this host lets the subject in. The pages for people check people with it (ADR 0021), the
+ * A2A listener ServiceAccounts (ADR 0030). Written on Node's own crypto: the algorithm is fixed to
  * EdDSA (Ed25519), so a JOSE library would add little but a dependency.
  */
 

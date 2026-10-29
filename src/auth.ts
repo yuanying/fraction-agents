@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 
+import type { AssertionVerifier } from "./gated-assertion.ts";
+
 /** The audience of the tokens callers send to agents, kept apart from the apiserver's own (ADR 0003). */
 export const A2A_AUDIENCE = "a2a";
 
@@ -16,9 +18,37 @@ export interface TokenReviewer {
   review(token: string, audiences: string[]): Promise<TokenReviewResult>;
 }
 
+/** A refusal's `reason` goes back to the caller; its `detail`, when there is one, only to the host's log. */
 export type AuthResult =
   | { ok: true; caller: string }
-  | { ok: false; status: 401 | 403 | 503; reason: string };
+  | { ok: false; status: 401 | 403 | 503; reason: string; detail?: string };
+
+export interface Credentials {
+  /** The `Authorization` header. */
+  authorization?: string | undefined;
+  /** gated's `Gated-Assertion` header. */
+  assertion?: string | undefined;
+}
+
+/**
+ * Checks a request to the A2A listener. Without a verifier, by its bearer token alone (ADR 0003). With one, a request
+ * that carries gated's assertion is decided by the assertion alone, whose subject must be one of the allowed
+ * ServiceAccounts; the bearer token is then not looked at, nor fallen back on when the assertion fails (ADR 0030).
+ */
+export async function authenticateCaller(
+  credentials: Credentials,
+  reviewer: TokenReviewer,
+  allowedCallers: readonly string[],
+  verifier?: AssertionVerifier,
+): Promise<AuthResult> {
+  if (!verifier || credentials.assertion === undefined) {
+    return authenticate(credentials.authorization, reviewer, allowedCallers);
+  }
+  const result = await verifier.verify(credentials.assertion);
+  if (result.ok) return { ok: true, caller: result.subject };
+  const reason = result.status === 401 ? "invalid assertion" : "caller not allowed";
+  return { ok: false, status: result.status, reason, detail: `${reason}: ${result.reason}` };
+}
 
 /**
  * Checks an `Authorization` header: the token must pass a TokenReview for the `a2a` audience and belong to one of
