@@ -192,7 +192,7 @@ async function request(name, method, url, token) {
   if (response.status === 401 || response.status === 403) {
     await response.body?.cancel();
     throw new UserError(
-      `agent "${name}" refused the token (${response.status}): it may have expired, or the agent does not accept this caller. Ask the user to issue a new token.`,
+      `agent "${name}" refused the token (${response.status}): it may have expired, its audience may not fit the URL (gated's audience through gated, a2a for the Service), or the agent does not accept this caller. Ask the user to check the token and issue a new one.`,
     );
   }
   return response;

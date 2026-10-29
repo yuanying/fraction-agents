@@ -66,6 +66,26 @@ gated の audience の token で gated を通った要求は、Bearer を落と�
 - gated の後ろでは、アサーションは gated が付けたものしかない。それが確かめられないのは、gated の鍵の交換の途中、`aud` と `publicUrl` の食い違い、gated を通らずに来た偽物のどれかである。どれも黙って Bearer で通すより、断ってログに残す方が気づける（ADR 0003・0006 の「認証を通らない依頼を一切処理しない」）。
 - gated を通った要求は、TokenReview を問い合わせずに済む。apiserver の負荷（ADR 0006 の Consequences）が増えない。
 
+### 呼び出し元が使う token
+
+本人と決めたこと（2026-10-29）:
+
+- gated を通って係のホスト名で呼ぶ呼び出し元（クラスタの外の `owner`・`claude`・なつみなど）は、gated の audience（gated の `--serviceaccount-audience` の値）の token だけを使う。
+- Service を直接呼ぶ呼び出し元（クラスタの中の Pod。vuln-tracker など）は、今までどおり audience `a2a` の token を使う。
+- 1 つの token に 2 つの audience を持たせて両方に使う形は作らない。
+- 係の Ingress は、後で gated の NetworkRole で守る。通すのは各係の `allowedCallers` の主体で、Agent Card と `/healthz` は未ログインでも `GET`・`HEAD` を許す。
+  守ったあとは、gated を通る URL に `a2a` の token を送っても、gated が未ログインとして断る。
+
+理由は次のとおりである。
+
+- gated の audience の token は、gated が確かめて `Authorization` ごと落とし、アサーションに置き換える。係は token を一度も受け取らない。
+  ADR 0003 で audience を分けた狙い（係が受け取った token を別の相手に使い回せない）は、gated を通る道でも保たれる。
+- 両用の token は、gated を通る道でも `a2a` の audience を持ったまま流れる。gated の設定を誤って素通しになった係は、その token を受け取り、Service を直接呼ぶ道で使い回せる。
+- 切り替えは、呼ぶ係すべてに `gated` の設定が入ってからにする。`gated` の無い係では、gated が `Authorization` を落とすので、gated の audience の token は 401 になる。
+  NetworkRole で守るのは、gated を通る呼び出し元を切り替えたあとにする。
+
+README の「token を発行する」と共通のスキル（ADR 0005）は、この決定に合わせて書き分ける。スキルが `kubectl create token` を自分で実行しない決まりは変えない。
+
 ### 退けた案
 
 - **Bearer を先に見る。** gated が ServiceAccount の token を受け付けたときは Bearer が落とされているので、gated を通った機械には差が無い。
@@ -77,6 +97,8 @@ gated の audience の token で gated を通った要求は、Bearer を落と�
   これは受け入れる。機械は gated のログインを持たず、人は機械の口を使わない（ADR 0021 で口を分けた）。
 - **`aud` に比べるホスト名を、`gated.audience` のような新しい項目にする。** `publicUrl` と別に書くと、2 か所を揃える手間と食い違いの元が増える。`publicUrl` を変えるときは呼び出し元の URL も変わるので、同時に直ることになる。
 - **人用のページと別の `gated` を A2A の口に持たせる（`a2a.gated` など）。** gated はクラスタに 1 つで、発行元と JWKS は同じである。2 か所に書く理由が無い。
+- **呼び出し元に、`a2a` と gated の audience の両方を持つ token を 1 つ渡す。** 呼び出し元の手元の token が 1 つで済み、移行の途中にどちらの道でも通る。
+  しかし、上の「呼び出し元が使う token」のとおり、`a2a` の audience の token が gated を通る道にも流れ、使い回せない性質が gated の設定の正しさに頼ることになる。
 - **`allowedCallers` とは別に、アサーションで許す主体の一覧を持つ。** どちらの入口から来ても同じ呼び出し元として扱うので、一覧も 1 つにする。gated の NetworkRoleBinding と `allowedCallers` に同じ主体を書くのは、ADR 0021 と同じく意図した二重化である。
 
 ## Consequences
@@ -87,4 +109,5 @@ gated の audience の token で gated を通った要求は、Bearer を落と�
 - `aud` はホスト名で、パスを含まない（gated ADR 0034）。複数の係を 1 つのホスト名の下にパスで並べると、ある係が受け取ったアサーションを、期限（60 秒）内に同じホストの別の係へ持ち込めば通る。係ごとに別のホスト名で出す前提である。
 - gated を通らない道（Service へ直接）では、偽のアサーションは署名で落ちる。gated を通った要求に付いたアサーションを、それを受け取った係が期限内に別のホスト名の係へ持ち込んでも、6 で落ちる。
 - 人が gated にログインしたまま Bearer を付けて A2A の口を呼ぶと、403 になる。
-- 呼び出し元の token の発行手順（`kubectl create token ... --audience a2a`）と、gated の audience の token への切り替えの順番は、この ADR では決めない。環境の移行の手順として別に決める。
+- 呼び出し元の token は、呼ぶ道ごとに 1 つの audience になる。gated を通る呼び出し元と Service を直接呼ぶ呼び出し元が同じ ServiceAccount なら、token を 2 つ持つことになる。
+- gated の audience の token に切り替える順番（係の `gated` の設定 → 呼び出し元の token → NetworkRole）を誤ると、呼び出し元が 401 で止まる。具体の手順は環境の側（ADR 0010）に書く。

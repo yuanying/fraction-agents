@@ -46,7 +46,8 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - A2A 1.0 を JSON-RPC over HTTP で受ける。公式の [`a2a-cli`](https://github.com/a2aproject/a2a-cli) からそのまま呼べる。
 - Agent Card は `/.well-known/agent-card.json` に出す。名前・説明・スキルは設定から取る。Agent Card と `/healthz` だけは認証なしで返す。
   Ingress でインターネットに出す（ADR 0006）ので、エージェントの名前・説明・スキルは外から見える。Agent Card に秘密や内部の情報を書かない。
-- それ以外の呼び出しには、audience `a2a` の ServiceAccount token を `Authorization: Bearer` で付ける。
+- それ以外の呼び出しには、ServiceAccount の token を `Authorization: Bearer` で付ける。token の audience は、どこを通って呼ぶかで決まる（下の「token を発行する」）。
+- Service を直接呼ぶときは、audience `a2a` の token を付ける。
   ホストは TokenReview で確かめ、設定で許した ServiceAccount だけを受け付ける（ADR 0003）。
 - 設定に `gated` を書いた係は、gated を通って来た呼び出しも受け付ける（ADR 0030）。
   呼び出し元は gated の audience の ServiceAccount token を `Authorization: Bearer` で付け、gated を通る係のホスト名で呼ぶ。
@@ -389,24 +390,21 @@ deep research の係の image は target `deep-researcher` で、ページを読
 
 ### 呼び出し方
 
-`a2a-cli` から呼ぶ例:
-
-```bash
-export A2ACLI_AUTH="Bearer $(kubectl create token claude -n fraction-agents --audience a2a)"
-a2a send -a https://agents.example.test/wiki-keeper/ --async "この記事を取り込んで"
-a2a task get -a https://agents.example.test/wiki-keeper/ <task-id> --wait
-a2a send -a https://agents.example.test/wiki-keeper/ --context-id <context-id> "続けて、関連ページも直して"
-```
-
-設定に `gated` を書いた係は、gated の audience の token で、gated を通る係のホスト名からも呼べる（ADR 0030）。
-token の audience は gated の `--serviceaccount-audience` の値で、ServiceAccount は gated の NetworkRoleBinding と係の `allowedCallers` の両方に入っている必要がある。
+`a2a-cli` から、gated を通る係のホスト名で呼ぶ例。token の audience は gated の audience（下の「token を発行する」）である:
 
 ```bash
 export A2ACLI_AUTH="Bearer $(kubectl create token claude -n fraction-agents --audience https://auth.example.test)"
 a2a send -a https://wiki-keeper.example.test/ --async "この記事を取り込んで"
+a2a task get -a https://wiki-keeper.example.test/ <task-id> --wait
+a2a send -a https://wiki-keeper.example.test/ --context-id <context-id> "続けて、関連ページも直して"
 ```
 
-クラスタの中の Pod は、projected volume でこの audience の token を受け取れる。gated を通らない Service への直接の呼び出しには、今までどおり audience `a2a` の token を使う。
+クラスタの中から Service を直接呼ぶときは、audience `a2a` の token を付ける:
+
+```bash
+export A2ACLI_AUTH="Bearer $(kubectl create token claude -n fraction-agents --audience a2a)"
+a2a send -a http://wiki-keeper.fraction-agents.svc/ --async "この記事を取り込んで"
+```
 
 ### テスト
 
@@ -444,14 +442,36 @@ Homebrew は最新版を入れるので、版を固定できない。`a2a versio
 呼び出し元ごとに、名前空間 `fraction-agents` の ServiceAccount がある（例 `owner`、`claude`。ADR 0003）。
 呼ぶエージェントの設定の `allowedCallers` に、その ServiceAccount が入っている必要がある。
 
-クラスタに入れる人が、audience `a2a` の期限つきの token を発行し、呼び出し元の手元のファイルに書く。
+token の audience は、どこを通って呼ぶかで 1 つに決まる（ADR 0030）。1 つの token を両方に使う形（audience を 2 つ持つ token）は作らない。
+
+| 呼び方 | URL | token の audience |
+|---|---|---|
+| gated を通る（クラスタの外の `owner`・`claude`・なつみなど） | 係のホスト名（例 `https://wiki-keeper.example.test/`） | gated の audience。gated の `--serviceaccount-audience` の値（例 `https://auth.example.test`） |
+| Service を直接呼ぶ（クラスタの中の Pod） | Service の URL（例 `http://wiki-keeper.fraction-agents.svc/`） | `a2a` |
+
+- gated を通るときは、gated が token を確かめて `Authorization` ごと落とし、`Gated-Assertion` に置き換えて係に渡す。係は token を見ない。
+  ServiceAccount は、gated の NetworkRoleBinding と係の `allowedCallers` の両方に入っている必要がある。
+- Service を直接呼ぶときは、係が TokenReview で確かめる（ADR 0003）。
+
+クラスタに入れる人が、期限つきの token を発行し、呼び出し元の手元のファイルに書く。
 期限は 90 日を目安にする（apiserver の設定によっては、それより短く切り詰められる）。
+クラスタの中の Pod は、projected volume で同じ audience の token を受け取れる。コピーは要らない。
 
 ```bash
 mkdir -p -m 0700 ~/.config/fraction-agents/tokens
-(umask 077; kubectl create token claude -n fraction-agents --audience a2a --duration 2160h \
+(umask 077; kubectl create token claude -n fraction-agents --audience https://auth.example.test --duration 2160h \
   > ~/.config/fraction-agents/tokens/claude)
 ```
+
+Service を直接呼ぶ呼び出し元に発行するときは、`--audience a2a` にする。
+
+audience `a2a` の token から gated の audience の token に切り替えるときの注意:
+
+- 切り替えた token が通るのは、設定のトップレベルに `gated` を書いた係だけである。`gated` の無い係では、gated が `Authorization` を落とし、係にはアサーションしか届かないので 401 になる。
+  呼ぶ係すべてに `gated` が入ってから切り替える。
+- 係の Ingress を gated の NetworkRole で守ったあとは、gated を通る URL に `a2a` の token を送っても、gated に未ログインとして断られる。
+  NetworkRole で守る前に、gated を通る呼び出し元を切り替えておく。
+- 補助スクリプトの設定の `url` と `tokenFile` の組み合わせも、同じ表に合わせる（gated を通る URL には gated の audience の token）。
 
 - token は画面に出さず、そのままファイルに書く。ファイルの権限は 0600（ディレクトリは 0700）にする。
   補助スクリプトは、所有者以外が読める token のファイルを使わずに断る。
@@ -471,7 +491,7 @@ mkdir -p -m 0700 ~/.config/fraction-agents/tokens
 | `agents` | 必須 | エージェントの名前から設定への対応。名前は呼び出し元が付ける呼び名で、スキルの `agent <名前>` に使う |
 | `agents.<名前>.url` | 必須 | エージェントの URL（汎用ホストの設定の `publicUrl`）。Agent Card はこの下の `/.well-known/agent-card.json` から取る |
 | `agents.<名前>.tokenFile` | | このエージェントにだけ使う token のファイル。無ければ上の階層の `tokenFile` を使う |
-| `tokenFile` | | 既定の token のファイル。呼び出し元の token は 1 つなので、普通はここに 1 つ書く |
+| `tokenFile` | | 既定の token のファイル。呼び出し元の token は 1 つ（gated を通る係のホスト名を呼ぶなら、gated の audience の token）なので、普通はここに 1 つ書く |
 
 `tokenFile` は、`~/` で始まればホームディレクトリから、相対パスなら設定ファイルのあるディレクトリから辿る。
 設定ファイル自体に秘密は無いが、token は必ず別のファイルに置く。
@@ -482,8 +502,8 @@ mkdir -p -m 0700 ~/.config/fraction-agents/tokens
 {
   "tokenFile": "~/.config/fraction-agents/tokens/claude",
   "agents": {
-    "wiki-keeper": { "url": "https://agents.example.test/wiki-keeper/" },
-    "gmail-agent": { "url": "https://agents.example.test/gmail-agent/" }
+    "wiki-keeper": { "url": "https://wiki-keeper.example.test/" },
+    "gmail-agent": { "url": "https://gmail-agent.example.test/" }
   }
 }
 ```
