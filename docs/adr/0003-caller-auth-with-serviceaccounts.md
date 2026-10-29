@@ -1,7 +1,7 @@
 # 0003. 呼び出し元の認証は ServiceAccount と TokenReview で行う
 
 - Date: 2026-09-22
-- Status: Accepted（「公開の範囲」の「LAN の中だけに公開する」は ADR 0006 で置き換えた）
+- Status: Accepted（「公開の範囲」の「LAN の中だけに公開する」は ADR 0006 で置き換えた。gated を通る 2 つ目の入口を ADR 0030 で足した。この ADR の TokenReview の入口は残る）
 
 ## Context
 
@@ -62,3 +62,11 @@ Kubernetes には、ServiceAccount の token を発行し、その正しさを A
 - エージェントは、依頼のたびに apiserver に TokenReview を問い合わせる。apiserver が止まると、エージェントは依頼を受けられない。
 - クラスタの外の呼び出し元の token は、コピーした先に期限まで残る。漏れれば期限まで使える。期限が来るたびに手で発行し直す必要がある。
 - apiserver が `a2a` を自分の audience として受け付けない設定であることが前提になる。apiserver の設定を変えるときは、この前提を崩さないか確かめる。
+
+## 追記（2026-10-29）
+
+- ADR 0030 で、呼び出し元の認証に、gated を通る 2 つ目の入口を足した。
+  - 呼び出し元は、gated の audience の ServiceAccount の token を付けて、gated を通る URL で呼べる。gated が TokenReview で確かめ、`Gated-Assertion` に主体を載せて転送する。エージェントはそれを gated の公開鍵で確かめ、主体を `allowedCallers` と比べる。
+  - 主体の形は、この ADR の TokenReview の username と同じ `system:serviceaccount:<namespace>:<name>` で、どちらの入口から来ても同じ呼び出し元として扱う。
+- この ADR の入口（audience `a2a` の token と、エージェント自身の TokenReview）は残す。Service を直接呼ぶ道と、移行の途中の呼び出し元のためである。
+- 「エージェントは、依頼のたびに apiserver に TokenReview を問い合わせる」は、gated を通った要求には当てはまらなくなる。問い合わせるのは gated である。

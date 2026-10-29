@@ -36,6 +36,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0027. GitHub への書き込みを、App の鍵を持つ sidecar に代行させる](docs/adr/0027-github-writer-sidecar.md)
 - [0028. 脆弱性への対応の係（vuln-responder）: 分析して VEX の注釈を PR で出す](docs/adr/0028-vuln-responder.md)
 - [0029. vuln-responder の直しの PR がマージされたら、すぐ次のパッチ版を出す](docs/adr/0029-release-vulnerability-fixes-on-merge.md)
+- [0030. 呼び出し元は gated 経由でも呼べるようにし、A2A の口でも gated のアサーションを確かめる](docs/adr/0030-callers-through-gated-assertions.md)
 
 ## 汎用ホスト
 
@@ -47,6 +48,15 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
   Ingress でインターネットに出す（ADR 0006）ので、エージェントの名前・説明・スキルは外から見える。Agent Card に秘密や内部の情報を書かない。
 - それ以外の呼び出しには、audience `a2a` の ServiceAccount token を `Authorization: Bearer` で付ける。
   ホストは TokenReview で確かめ、設定で許した ServiceAccount だけを受け付ける（ADR 0003）。
+- 設定に `gated` を書いた係は、gated を通って来た呼び出しも受け付ける（ADR 0030）。
+  呼び出し元は gated の audience の ServiceAccount token を `Authorization: Bearer` で付け、gated を通る係のホスト名で呼ぶ。
+  gated が token を TokenReview で確かめ、`Authorization` を落として `Gated-Assertion` に ServiceAccount を載せて転送する。
+  ホストはそのアサーションを人用のページ（ADR 0021）と同じ 8 段で確かめ、`sub` を `allowedCallers` と比べる。
+  - `aud` は `publicUrl` のホスト名と比べる。係ごとに別のホスト名で出す前提である。
+  - 呼び出し元の名前は、どちらの入口でも `system:serviceaccount:<namespace>:<name>` で、同じ呼び出し元として扱う。
+  - `Gated-Assertion` が付いた要求は、アサーションだけで決める。`Authorization` は見ず、アサーションが落ちても Bearer では通さない。
+    1〜7 段で落ちれば 401（`invalid assertion`）、主体が `allowedCallers` に無ければ 403（`caller not allowed`）。どの段で落ちたかはホストのログに残す。
+  - `gated` を書かなければ、`Gated-Assertion` は無視し、Bearer の入口だけである。
 - context はホストだけが採番する。contextId を付けずに送ると新しい context になる。
   contextId を付けられるのは、自分が前に受け取った context だけである。他人の context や、存在しない contextId はエラーになる。
 - context ごとに `pi --mode rpc --session <file>` を 1 つ立てる。セッションのファイル名はホストが決める。
@@ -79,6 +89,9 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 | `publicUrl` | 必須 | | 呼び出し元から見たこのエージェントの URL。Agent Card に載せる |
 | `port` | | `8080` | listen するポート |
 | `allowedCallers` | 必須 | | 受け付ける ServiceAccount。`system:serviceaccount:<namespace>:<name>` の形で書く |
+| `gated` | | なし | gated を通って来た呼び出しを、gated のアサーションで受け付ける（上、ADR 0030）。書くなら次の 2 つは必須。人用のページ（`reports.web`）もこれを使う |
+| `gated.issuer` | 必須 | | 受け付けるアサーションの発行元（gated の中央認証ホストの origin。例 `https://auth.example.test`） |
+| `gated.jwksUrl` | 必須 | | gated の公開鍵の JWKS の URL（例 `https://auth.example.test/__gated/jwks.json`） |
 | `agentDir` | 必須 | | pi の agentDir（AGENTS.md、settings.json、auth.json の置き場）。絶対パス |
 | `dataDir` | 必須 | | ホストのデータ領域。`state.db`（Task と context）と `sessions/`（セッションのファイル）を置く。絶対パス |
 | `workDir` | | `<dataDir>/work` | pi を動かす作業ディレクトリ。絶対パス |
@@ -95,9 +108,10 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 | `reports` | | なし | 返事をレポートとして残す（下の「レポート」）。`{}` で有効になる |
 | `reports.dir` | | `<dataDir>/reports` | レポートの置き場。絶対パス。backup はこのディレクトリだけを取ればよい |
 | `reports.readAllCallers` | | なし | 機械の口で、すべての呼び出し元のレポートを取れ・一覧できる呼び出し元の並び。`allowedCallers` と同じく `system:serviceaccount:<namespace>:<name>` で書き、`allowedCallers` に含まれていること。消すのは持ち主だけのまま（下の「レポート」、ADR 0025） |
-| `reports.web` | | なし | 人用のページの listener（下の「人用のページ」）。書くなら次の項目はすべて必須 |
+| `reports.web` | | なし | 人用のページの listener（下の「人用のページ」）。書くなら次の項目は、`reports.web.gated` を除いてすべて必須 |
 | `reports.web.port` | 必須 | | 人用の listener のポート。`port` とは別にする |
 | `reports.web.publicUrl` | 必須 | | 人から見た人用のページの URL。返事に足す URL と、アサーションの `aud` と比べるホスト名に使う |
+| `reports.web.gated` | | `gated` | 人用のページで受け付けるアサーションの `issuer` と `jwksUrl`。トップレベルの `gated` があれば省け、両方を書くなら同じ値にする（違えば起動しない） |
 | `reports.web.gated.issuer` | 必須 | | 受け付けるアサーションの発行元（gated の中央認証ホストの origin） |
 | `reports.web.gated.jwksUrl` | 必須 | | gated の公開鍵の JWKS の URL |
 | `reports.web.allowedSubjects` | 必須 | | 見てよい主体の並び（例 `github:<login>`）。gated の NetworkRole と同じ主体を書く |
@@ -383,6 +397,16 @@ a2a send -a https://agents.example.test/wiki-keeper/ --async "この記事を取
 a2a task get -a https://agents.example.test/wiki-keeper/ <task-id> --wait
 a2a send -a https://agents.example.test/wiki-keeper/ --context-id <context-id> "続けて、関連ページも直して"
 ```
+
+設定に `gated` を書いた係は、gated の audience の token で、gated を通る係のホスト名からも呼べる（ADR 0030）。
+token の audience は gated の `--serviceaccount-audience` の値で、ServiceAccount は gated の NetworkRoleBinding と係の `allowedCallers` の両方に入っている必要がある。
+
+```bash
+export A2ACLI_AUTH="Bearer $(kubectl create token claude -n fraction-agents --audience https://auth.example.test)"
+a2a send -a https://wiki-keeper.example.test/ --async "この記事を取り込んで"
+```
+
+クラスタの中の Pod は、projected volume でこの audience の token を受け取れる。gated を通らない Service への直接の呼び出しには、今までどおり audience `a2a` の token を使う。
 
 ### テスト
 
