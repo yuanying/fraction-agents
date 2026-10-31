@@ -489,7 +489,7 @@ audience `a2a` の token から gated の audience の token に切り替える�
 | 項目 | 必須 | 意味 |
 |---|---|---|
 | `agents` | 必須 | エージェントの名前から設定への対応。名前は呼び出し元が付ける呼び名で、スキルの `agent <名前>` に使う |
-| `agents.<名前>.url` | 必須 | エージェントの URL（汎用ホストの設定の `publicUrl`）。Agent Card はこの下の `/.well-known/agent-card.json` から取る |
+| `agents.<名前>.url` | 必須 | エージェントの URL（汎用ホストの設定の `publicUrl`）。パスの無い URL なら、Agent Card はこの下の `/.well-known/agent-card.json` から取る。パスのある URL は、a2a-cli が Agent Card の URL そのものとして取るので、Card の完全な URL を書く |
 | `agents.<名前>.tokenFile` | | このエージェントにだけ使う token のファイル。無ければ上の階層の `tokenFile` を使う |
 | `tokenFile` | | 既定の token のファイル。呼び出し元の token は 1 つ（gated を通る係のホスト名を呼ぶなら、gated の audience の token）なので、普通はここに 1 つ書く |
 
@@ -504,6 +504,25 @@ audience `a2a` の token から gated の audience の token に切り替える�
   "agents": {
     "wiki-keeper": { "url": "https://wiki-keeper.example.test/" },
     "gmail-agent": { "url": "https://gmail-agent.example.test/" }
+  }
+}
+```
+
+なつみたち（`yuanying/natsumi` のインスタンス）も、同じ設定に足して呼べる。
+なつみの受け口は `https://<ホスト>/a2a/` の下にあり、Agent Card は `https://<ホスト>/a2a/.well-known/agent-card.json` にある。
+`url` にはこの Card の完全な URL を書く（`/a2a/` だけを書くと、a2a-cli はそこを Card として取りに行き、見つからない）。
+呼び出しは、Card に書かれた `/a2a/` に送られる。
+
+token は、gated の audience の、呼び出し元（本人の Claude なら `claude`）の ServiceAccount の token である。
+gated を通る係と同じ token なので、上の階層の `tokenFile` をそのまま使えばよい。
+なつみの側で、その ServiceAccount を送り手として宣言しておく必要がある（なつみの ADR 0089）。
+
+```json
+{
+  "tokenFile": "~/.config/fraction-agents/tokens/claude",
+  "agents": {
+    "wiki-keeper": { "url": "https://wiki-keeper.example.test/" },
+    "my-secretary": { "url": "https://secretary.example.test/a2a/.well-known/agent-card.json" }
   }
 }
 ```

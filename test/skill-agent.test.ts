@@ -153,6 +153,22 @@ describe("skills/fraction-agents/scripts/agent.mjs", () => {
     assert.equal(recorded(e).agentCard, "https://agents.example.test/wiki-keeper/");
   });
 
+  it("hands a full Agent Card URL to a2a as it is, for an agent whose card is not at the root", () => {
+    const e = setup();
+    writeToken(join(e.configDir, "tokens", "claude"));
+    writeConfig(e, {
+      tokenFile: "~/.config/fraction-agents/tokens/claude",
+      agents: {
+        "my-secretary": { url: "https://secretary.example.test/a2a/.well-known/agent-card.json" },
+      },
+    });
+    const result = run(e, ["my-secretary", "send", "--async", "明日の朝、天気を教えて"]);
+    assert.equal(result.status, 0, result.stderr);
+    const r = recorded(e);
+    assert.equal(r.agentCard, "https://secretary.example.test/a2a/.well-known/agent-card.json");
+    assert.equal(r.auth, `Bearer ${token}`);
+  });
+
   it("lets an agent use its own token file", () => {
     const e = setup();
     writeToken(join(e.configDir, "tokens", "claude"));
