@@ -37,7 +37,7 @@ pi は Dockerfile の中で、版を付けて npm でグローバルに入れて
 
 ### Node は Docker のタグではなく Node の版として読む
 
-Node の版は、Dockerfile のベースの image（`node:<版>-bookworm-slim`、2 か所）と、テストのワークフローの setup-node に書いてある。
+Node の版は、Dockerfile のベースの image（`node:<版>-trixie-slim`、2 か所）と、テストのワークフローの setup-node に書いてある。
 テストを通った Node と image の Node は同じでなければ意味がないので、この 3 か所を 1 つのグループ `node` にして、1 つの PR で上げる。
 
 Dockerfile の image のタグを Docker の image として読むと、7 日の待ちが正しく働かない。
@@ -46,7 +46,7 @@ Docker Hub が時刻を返さないこともあり、そのときは保留のま
 同じグループの setup-node の側は Node の版の時刻で 7 日を数えるので、image の側だけが取り残され、グループにした意味がなくなる。
 
 そこで Dockerfile の Node は custom manager で版の部分だけを読み、Node の版の一覧（setup-node と同じ datasource）で追う。
-タグの `-bookworm-slim` の部分は書かれたまま残る。Dockerfile の標準の manager が同じ Node を二重に提案しないよう、そちらの Node は無効にする。
+タグの `-trixie-slim` の部分は書かれたまま残る。Dockerfile の標準の manager が同じ Node を二重に提案しないよう、そちらの Node は無効にする。
 こうすると 3 か所とも同じ時刻で 7 日を数え、同じ日に同じ版が届く。
 
 Node の major は、Renovate の Node の版の扱いに従い、LTS になった版だけが届く。
