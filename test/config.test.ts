@@ -276,6 +276,16 @@ describe("the agents' examples", () => {
     assert.ok(config.piCommand[config.piCommand.indexOf("--exclude-tools") + 1]?.split(",").includes("ask_caller"));
   });
 
+  // vuln-responder's VEX statements cover every version unless the reason holds for one version only (ADR 0028):
+  // self-built images change digest weekly, so a digest-only statement soon stops matching and vuln-tracker asks again.
+  it("tell vuln-responder when a VEX statement covers every version", () => {
+    const text = readFileSync(join(agentsDir, "vuln-responder", "AGENTS.md"), "utf8");
+    assert.match(text, /迷ったら全版/);
+    assert.match(text, /digest 限定にするのは/);
+    assert.match(text, /古い digest 限定の statement は消す/);
+    assert.match(text, /週次/);
+  });
+
   // The deep researcher reads code and never runs it (ADR 0022): pi gives it the reading tools only, and the host
   // leaves out the tools that run or change things and the one that searches outside (the extensions stop them too).
   it("give the deep researcher only the reading tools", () => {
