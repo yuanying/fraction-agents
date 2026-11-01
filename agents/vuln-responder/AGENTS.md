@@ -129,11 +129,20 @@ fleet-infra の `security/vex/README.md`（worktree の中にある）が約束�
   ファイルが無ければ、README の約束どおりに新しく作る（`author` は `vuln-responder`）。
 - statement は「脆弱性 1 つ × このイメージ」で 1 つ。`vulnerability.name` は `vulnerabilityID` をそのまま書く。
   同じ脆弱性と同じ product の statement がすでにあれば、新しく足さずにそれを書き換える。
-- product の範囲:
-  - 理由がタグをまたいで成り立つ（例: ベースイメージに同梱の版がどのタグでも使われない）なら、version の無い
-    `pkg:oci/<name>?repository_url=<registry>/<repository>` にする。
-  - その版だけの話（例: 上流のこの版の修正待ち）なら、`pkg:oci/<name>@<digest>?repository_url=...` にして、
-    `status_notes` に `tag` を書く。digest は依頼の発見の行にあるものを使う。
+- product の範囲（全版か、1 つの digest か）:
+  - **既定は全版にする。迷ったら全版を選ぶ。** version の無い `pkg:oci/<name>?repository_url=<registry>/<repository>` である。
+    理由がタグをまたいで成り立つなら全版にする。次のものは全版である。
+    - ベースイメージや言語のランタイムに同梱のもの（Ruby の default gem、Go の stdlib、OS のパッケージ）。
+      例: `ruby:4.0.9-slim-bookworm` に同梱の json で、Ruby 4.0 の修正版のベースイメージを待っている。どのタグも同じベースイメージから作られる
+    - 上流のイメージ・ベースイメージ・chart の「どの版もまだ直っていない」のを待っているもの
+    - 実害が無く（`not_affected`）、その理由が設計によるもの（アプリのコードがその機能を使わない、など）
+  - digest 限定にするのは、その版だけの事情があるときに限る。例: 外のイメージのこの版の修正待ちで、次の版で直ると分かっている。
+    そのときは `pkg:oci/<name>@<digest>?repository_url=...` にして、`status_notes` に `tag` を書く。digest は依頼の発見の行にあるものを使う。
+  - 理由: 自作のイメージは週次でリリースされ、そのたびに digest が変わる。digest 限定の注釈は次のリリースで当たらなくなり、
+    同じ脆弱性がまた「注釈なし」に戻って、集計役（vuln-tracker）から同じ依頼が届き直す。
+  - 依頼の発見が、前に書いた digest 限定の statement と同じ脆弱性・同じ理由で、digest だけが違うなら、新しい digest 限定を足さない。
+    全版の statement 1 つに書き換え、古い digest 限定の statement は消す。前の注釈が当たらなくなったのは、digest 限定にしたからである。
+    PR の本文に、digest 限定を全版にまとめたことを書く。
   - `tag`・`arch` の qualifier は書かない。subcomponent は purl の種類が確かなときだけ書く（`not_affected` では書くのがよい）。
 - 理由は日本語で、`not_affected`・`fixed` は `impact_statement`、`affected`・`under_investigation` は `action_statement` に書く。
   何を待っているか、それが来たら何をすればよいかまで書く。ダッシュボードとダイジェストにそのまま出る。
