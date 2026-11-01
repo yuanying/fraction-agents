@@ -4,7 +4,7 @@
   "extends": ["github>yuanying/renovate-config", "github>yuanying/renovate-config:automerge-patch"],
   "customManagers": [
     {
-      "description": "The Node of the images' base is read as a Node release rather than as a Docker tag. A tag such as 24.12.0-bookworm-slim is pushed again each time its Debian layer is rebuilt, so its time is not when that Node came out, and Docker Hub does not always give a time at all; without one, the two-day wait holds the image back for good while setup-node moves on alone. Read from the Node releases, both carry the same time and so are let through on the same day. The variant after the version is kept as written",
+      "description": "The Node of the images' base is read as a Node release rather than as a Docker tag. A tag such as 24.12.0-trixie-slim is pushed again each time its Debian layer is rebuilt, so its time is not when that Node came out, and Docker Hub does not always give a time at all; without one, the two-day wait holds the image back for good while setup-node moves on alone. Read from the Node releases, both carry the same time and so are let through on the same day. The variant after the version is kept as written",
       "customType": "regex",
       "managerFilePatterns": ["/^Dockerfile$/"],
       "matchStrings": ["FROM node:(?<currentValue>\\d+\\.\\d+\\.\\d+)-"],
