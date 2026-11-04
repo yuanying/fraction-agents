@@ -38,6 +38,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0029. vuln-responder の直しの PR がマージされたら、すぐ次のパッチ版を出す](docs/adr/0029-release-vulnerability-fixes-on-merge.md)
 - [0030. 呼び出し元は gated 経由でも呼べるようにし、A2A の口でも gated のアサーションを確かめる](docs/adr/0030-callers-through-gated-assertions.md)
 - [0031. 依存の更新は、コードオーナーの承認で GitHub がマージする](docs/adr/0031-merge-dependency-updates-on-code-owner-approval.md)
+- [0032. 係は Task の状態の変化を A2A の push で送り、送り先は設定で許した URL に限る](docs/adr/0032-push-task-updates-to-allowed-urls.md)
 
 ## 汎用ホスト
 
