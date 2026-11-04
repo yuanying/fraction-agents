@@ -98,6 +98,7 @@ export function containsInFiles(root: string, needle: string): string[] {
 export class FakeGitHub implements GitHubClient {
   readonly pulls: PullRequest[] = [];
   readonly merges: { number: number; sha: string; method: string }[] = [];
+  readonly reviewRequests: { number: number; reviewers: string[] }[] = [];
   tokensIssued = 0;
   readonly #remote: string;
 
@@ -145,6 +146,10 @@ export class FakeGitHub implements GitHubClient {
     if (input.title !== undefined) pull.title = input.title;
     if (input.body !== undefined) pull.body = input.body;
     return { ...pull };
+  }
+
+  async requestReviewers(number: number, reviewers: string[]): Promise<void> {
+    this.reviewRequests.push({ number, reviewers: [...reviewers] });
   }
 
   async mergePullRequest(number: number, input: { sha: string; method: string }): Promise<{ merged: boolean; message: string }> {

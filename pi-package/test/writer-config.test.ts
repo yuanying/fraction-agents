@@ -31,8 +31,18 @@ describe("github-writer settings", () => {
         writablePaths: [],
         appendOnlyPaths: [],
         readOnlyPaths: [],
+        reviewers: [],
       },
     ]);
+  });
+
+  it("reads who is asked to review a new pull request", () => {
+    const config = parseWriterConfig(withRepository({ reviewers: ["octo-cat", "Reviewer2"] }));
+    assert.deepEqual(config.repositories[0]?.reviewers, ["octo-cat", "Reviewer2"]);
+    assert.throws(() => parseWriterConfig(withRepository({ reviewers: "octo-cat" })), /reviewers must be a list of GitHub logins/);
+    assert.throws(() => parseWriterConfig(withRepository({ reviewers: [""] })), /reviewers must be a list of GitHub logins/);
+    assert.throws(() => parseWriterConfig(withRepository({ reviewers: ["@octo-cat"] })), /reviewers must be a list of GitHub logins/);
+    assert.throws(() => parseWriterConfig(withRepository({ reviewers: ["example/team"] })), /reviewers must be a list of GitHub logins/);
   });
 
   it("keeps the path rules of each repository", () => {

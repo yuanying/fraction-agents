@@ -99,6 +99,11 @@ export class GitHubApp implements GitHubClient {
     return pull((await this.#api("PATCH", `${this.#repoPath()}/pulls/${number}`, input)) as RawPull);
   }
 
+  /** Asks these users to review the pull request. GitHub refuses (422) anyone who is not a collaborator, or the author. */
+  async requestReviewers(number: number, reviewers: string[]): Promise<void> {
+    await this.#api("POST", `${this.#repoPath()}/pulls/${number}/requested_reviewers`, { reviewers });
+  }
+
   async mergePullRequest(number: number, input: { sha: string; method: string }): Promise<{ merged: boolean; message: string }> {
     const response = await this.#request("PUT", `${this.#repoPath()}/pulls/${number}/merge`, {
       sha: input.sha,

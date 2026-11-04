@@ -11,6 +11,7 @@ import { mirrorPath, type WriterConfig, type WriterRepository } from "./writer-c
 /** What the writer needs from GitHub for one repository. The real one is a `GitHubApp` for that repository. */
 export type WriterGitHub = Pick<GitHubClient, "gitAuthorization" | "findPullRequest" | "createPullRequest" | "updatePullRequest"> & {
   latestPullRequest(head: string): Promise<PullRequest | undefined>;
+  requestReviewers(number: number, reviewers: string[]): Promise<void>;
 };
 
 /** A refusal or failure, with the HTTP status the sidecar answers with. Its message is written for the model. */
@@ -40,10 +41,16 @@ export class GitHubWriter {
   readonly #github: (repository: WriterRepository) => WriterGitHub;
   readonly #clients = new Map<WriterRepository, WriterGitHub>();
   readonly #locks = new Map<WriterRepository, Promise<unknown>>();
+  readonly #log: (line: string) => void;
 
-  constructor(options: { config: WriterConfig; github: (repository: WriterRepository) => WriterGitHub }) {
+  constructor(options: {
+    config: WriterConfig;
+    github: (repository: WriterRepository) => WriterGitHub;
+    log?: (line: string) => void;
+  }) {
     this.#config = options.config;
     this.#github = options.github;
+    this.#log = options.log ?? ((line: string) => console.error(line));
   }
 
   /** The repository of the settings, or a 404. */
@@ -110,7 +117,10 @@ export class GitHubWriter {
     });
   }
 
-  /** Opens the branch's pull request against the default branch, or updates the open one it has. */
+  /**
+   * Opens the branch's pull request against the default branch, or updates the open one it has. A pull request it
+   * opens is sent to the repository's reviewers; failing to ask them is logged, and the pull request stays open.
+   */
   async pullRequest(
     repository: WriterRepository,
     input: { branch: string; title?: string; body?: string },
@@ -134,6 +144,7 @@ export class GitHubWriter {
     const pull = await this.#onGitHub(() =>
       github.createPullRequest({ title: input.title!, body: input.body ?? "", head: input.branch, base: repository.defaultBranch }),
     );
+    await this.#requestReviewers(repository, github, pull);
     return { created: true, pull };
   }
 
@@ -141,6 +152,17 @@ export class GitHubWriter {
   async latestPullRequest(repository: WriterRepository, branch: string): Promise<PullRequest | undefined> {
     await this.#checkBranch(repository, branch);
     return this.#onGitHub(() => this.#client(repository).latestPullRequest(branch));
+  }
+
+  async #requestReviewers(repository: WriterRepository, github: WriterGitHub, pull: PullRequest): Promise<void> {
+    if (repository.reviewers.length === 0) return;
+    try {
+      await github.requestReviewers(pull.number, repository.reviewers);
+    } catch (error) {
+      this.#log(
+        `github-writer: asking ${repository.reviewers.join(", ")} to review ${repository.owner}/${repository.name}#${pull.number} failed: ${message(error)}`,
+      );
+    }
   }
 
   async #checkBranch(repository: WriterRepository, branch: string): Promise<void> {

@@ -50,7 +50,7 @@ function bareRemote(dir: string, name: string, files: Record<string, string>): s
   return remote;
 }
 
-async function setUp(overrides: Record<string, unknown> = {}): Promise<Setup> {
+async function setUp(overrides: Record<string, unknown> = {}, infraOverrides: Record<string, unknown> = {}): Promise<Setup> {
   const wikiFixture = makeFixture();
   const dir = wikiFixture.dir;
   const infraRemote = bareRemote(dir, "infra", { "security/vex/README.md": "vex\n", "apps/a.yaml": "a: 1\n" });
@@ -66,14 +66,25 @@ async function setUp(overrides: Record<string, unknown> = {}): Promise<Setup> {
         appendOnlyPaths: ["raw/"],
         readOnlyPaths: ["Permanent-Notes/"],
       },
-      { owner: "example", name: "infra", remoteUrl: `file://${infraRemote}`, branchPrefix: PREFIX, writablePaths: ["security/vex/"] },
+      {
+        owner: "example",
+        name: "infra",
+        remoteUrl: `file://${infraRemote}`,
+        branchPrefix: PREFIX,
+        writablePaths: ["security/vex/"],
+        ...infraOverrides,
+      },
     ],
     ...overrides,
   });
   const [wiki, infra] = config.repositories as [WriterRepository, WriterRepository];
   const github = { wiki: wikiFixture.github, infra: new FakeGitHub(infraRemote) };
-  const writer = new GitHubWriter({ config, github: (repository) => (repository.name === "wiki" ? github.wiki : github.infra) });
   const logs: string[] = [];
+  const writer = new GitHubWriter({
+    config,
+    github: (repository) => (repository.name === "wiki" ? github.wiki : github.infra),
+    log: (line) => logs.push(line),
+  });
   const responses: string[] = [];
   const server = createWriterServer(writer, { config, log: (line) => logs.push(line) });
   server.on("request", (_req, res) => {
@@ -367,6 +378,46 @@ describe("github-writer: pull requests", () => {
     const latest = await setup.client.latestPullRequest(setup.infra, `${PREFIX}ctx-1`);
     assert.equal(latest?.number, 1);
     assert.equal(latest?.state, "closed");
+  });
+
+  it("asks the repository's reviewers to review a new pull request, and not again when it is updated", async () => {
+    const setup = await setUp({}, { reviewers: ["octo-cat", "reviewer2"] });
+    const cwd = await agentClone(setup, setup.infra);
+    commit(cwd, { "security/vex/a.openvex.json": "{}\n" }, "vex");
+    await pullRequestWorkspace(setup.config, setup.client, cwd, { title: "VEX for A", body: "Why" });
+    assert.deepEqual(setup.github.infra.reviewRequests, [{ number: 1, reviewers: ["octo-cat", "reviewer2"] }]);
+
+    commit(cwd, { "security/vex/b.openvex.json": "{}\n" }, "more vex");
+    await pullRequestWorkspace(setup.config, setup.client, cwd, { body: "Why, and B" });
+    await pullRequestWorkspace(setup.config, setup.client, cwd, {});
+    assert.equal(setup.github.infra.pulls.length, 1);
+    assert.equal(setup.github.infra.reviewRequests.length, 1, "an existing pull request is not asked again");
+  });
+
+  it("asks nobody when the repository has no reviewers", async () => {
+    const setup = await setUp();
+    const cwd = await agentClone(setup, setup.infra);
+    commit(cwd, { "security/vex/a.openvex.json": "{}\n" }, "vex");
+    await pullRequestWorkspace(setup.config, setup.client, cwd, { title: "VEX" });
+    assert.equal(setup.github.infra.pulls.length, 1);
+    assert.deepEqual(setup.github.infra.reviewRequests, []);
+  });
+
+  it("still opens the pull request when asking for reviewers fails, and logs why", async () => {
+    const setup = await setUp({}, { reviewers: ["outsider"] });
+    const cwd = await agentClone(setup, setup.infra);
+    commit(cwd, { "security/vex/a.openvex.json": "{}\n" }, "vex");
+    setup.github.infra.requestReviewers = async () => {
+      throw new Error("GitHub POST /repos/example/infra/pulls/1/requested_reviewers failed: HTTP 422 Reviews may only be requested from collaborators.");
+    };
+    const opened = await pullRequestWorkspace(setup.config, setup.client, cwd, { title: "VEX" });
+    assert.match(opened, /Opened pull request #1: https:\/\//);
+    assert.equal(setup.github.infra.pulls.length, 1);
+    const line = setup.logs.find((entry) => entry.includes("reviewers"));
+    assert.ok(line, `a log line about the reviewers in: ${setup.logs.join("\n")}`);
+    assert.match(line, /example\/infra#1/);
+    assert.match(line, /outsider/);
+    assert.match(line, /HTTP 422/);
   });
 
   it("reports a failure on GitHub as such", async () => {
