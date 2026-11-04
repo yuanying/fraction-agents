@@ -75,7 +75,8 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
   - 続きの依頼は、同じ contextId で新しいメッセージを送る。
   - pi の中の拡張が呼び出し元に質問したとき（下の「聞き返し」）だけ、Task は `INPUT_REQUIRED` で止まる。
     その Task の taskId を付けたメッセージが答えになる。それ以外の Task に taskId を付けたメッセージは受け付けない。
-- 結果は、`returnImmediately` ですぐ返してから GetTask で取りに行く使い方を基本とする。ストリーミングと push 通知は出していない。
+- 結果は、`returnImmediately` ですぐ返してから GetTask で取りに行く使い方を基本とする。ストリーミングは出していない。
+  設定の `pushNotifications` を書いた係は、Task の状態の変化を、許した URL へ push で知らせる（下の「push 通知」）。push は poll の代わりではない。
 - Task と context の記録は SQLite に持つので、ホストを再起動しても GetTask と ListTasks で取れる。
   再起動の時点で走っていた Task と答えを待っていた Task は `FAILED` にする。ListTasks は呼び出し元の Task だけを返す。
 
@@ -118,6 +119,8 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 | `reports.web.gated.issuer` | 必須 | | 受け付けるアサーションの発行元（gated の中央認証ホストの origin） |
 | `reports.web.gated.jwksUrl` | 必須 | | gated の公開鍵の JWKS の URL |
 | `reports.web.allowedSubjects` | 必須 | | 見てよい主体の並び（例 `github:<login>`）。gated の NetworkRole と同じ主体を書く |
+| `pushNotifications` | | なし | push の設定を受け、Task の状態の変化を送る（下の「push 通知」、ADR 0032）。書かなければ Agent Card は `pushNotifications: false` のまま |
+| `pushNotifications.allowedUrlPrefixes` | 必須 | | push の送り先として許す URL の接頭辞の並び（例 `https://caller.example.test/v1/a2a-push`）。空にできない。`https` の絶対 URL で、ユーザー名・パスワード・クエリ・フラグメントを含めば起動しない |
 
 例:
 
@@ -287,6 +290,28 @@ a2a send -a https://agents.example.test/web-researcher/ -o json \
 - 待っている依頼を CancelTask で止めると、走らせずに `CANCELED` にする。
 - 聞き返しの答えを待っている依頼は、枠を手放す。答えが届くと `SUBMITTED` に戻り、新しい依頼より先に枠を受け取って続く。
 - 待ちの列はメモリにだけある。ホストを再起動すると、待っていた依頼も走っていた依頼と同じく `FAILED` になる。
+
+### push 通知
+
+設定の `pushNotifications.allowedUrlPrefixes` を書いた係は、Agent Card を `capabilities.pushNotifications: true` にし、
+SendMessage の `configuration.taskPushNotificationConfig` と push の設定の API を受ける（ADR 0032）。書かない係は今までどおり受けない。
+
+- 送り先の `url` は、scheme・ホスト名・ポートがいずれかの接頭辞と一致し、パスがその接頭辞のパスと同じか、`/` の区切りでその下にあるときだけ許す。
+  ホスト名は文字列の前方一致で比べない（`https://a.example` は `https://a.example.evil.test` を許さない）。名前の解決の結果は確かめない。
+- 認証は `authentication` の Bearer だけを使う。`scheme` が `Bearer`（大文字・小文字は問わない）で `credentials` が空でないこと。古い形の `token` は使わない。
+- 許していない設定の扱い:
+  - SendMessage に付いていれば、設定だけを外して依頼を受ける。呼び出し元は poll で返事を拾う。
+    外したことは、Task の ID・呼び出し元・理由をログに出す。`credentials` と許している接頭辞は出さない。
+  - CreateTaskPushNotificationConfig は断る（JSON-RPC のエラー `-32602`）。終わった Task への設定も断る（`-32004`）。
+- 1 つの Task に設定は 1 つである。聞き返しに答える SendMessage に設定が付いていれば、前の設定を置き換える。付いていなければ前の設定を使い続ける。
+  CreateTaskPushNotificationConfig も、その Task の設定を置き換える。
+- 送るのは、要求の処理の中で起きた出来事（Task・状態の変化・artifact）ごとの v1.0 の `StreamResponse` である。
+  `Content-Type` は `application/a2a+json`、`Authorization` は `<scheme> <credentials>`。
+  - リダイレクトは辿らない。3xx の応答は送り損ねとして扱う。
+  - timeout は 5 秒。送り損ねても送り直さず、ログに Task の ID・送り先・理由だけを出す。
+- 設定はメモリにだけ持つ。Task が終わったら、最後の出来事を送った後で消す。再起動すると消え、再起動の時点で終わっていなかった Task は `FAILED` になる。
+- 再起動の後に `FAILED` にするときと、聞き返しの答えを待つ時間が尽きて `FAILED` にするときは、push を送らない。呼び出し元は poll を残す。
+- 係の Pod から送り先へ出られなければ、push は届かず送り損ねになる。送り先への egress は環境の側で開ける。
 
 ### レポート
 
@@ -962,6 +987,7 @@ patches:
 - `wiki-keeper-config` の中身。`config.json` の `publicUrl` と `allowedCallers`、`github-gate.json` の全体。
 - Ingress。Service の port 80 に向ける。
 - 呼び出し元の ServiceAccount（`owner`・`claude`・`natsumi` など）。
+- push の送り先として許す接頭辞（`config.json` の `pushNotifications`）と、係の Pod からその送り先への egress（上の「push 通知」、ADR 0032）。
 
 ### Deployment から移る
 
