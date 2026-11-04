@@ -1,7 +1,7 @@
 # 0007. 汎用ホストは A2A のアダプタが context ごとに Pi を子プロセスで動かす
 
 - Date: 2026-09-22
-- Status: Accepted
+- Status: Accepted（「結果の受け取り方」のポーリングに、ADR 0032 で push を足した。poll の道は残る）
 
 ## Context
 
