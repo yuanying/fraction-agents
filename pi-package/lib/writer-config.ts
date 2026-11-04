@@ -18,6 +18,8 @@ export interface WriterRepository {
   appendOnlyPaths: string[];
   /** Nothing here may be added, changed or deleted (e.g. `Permanent-Notes/`). */
   readOnlyPaths: string[];
+  /** The GitHub logins asked to review a pull request when the writer opens it. Nobody when empty. */
+  reviewers: string[];
 }
 
 /**
@@ -151,7 +153,19 @@ function repository(input: unknown, field: string): WriterRepository {
     writablePaths: paths(value.writablePaths, "writablePaths"),
     appendOnlyPaths: paths(value.appendOnlyPaths, "appendOnlyPaths"),
     readOnlyPaths: paths(value.readOnlyPaths, "readOnlyPaths"),
+    reviewers: logins(value.reviewers, `${field}.reviewers`),
   };
+}
+
+/** A user's login on GitHub: letters, digits and single hyphens, not at either end. */
+const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+
+function logins(value: unknown, field: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !LOGIN.test(item))) {
+    throw new Error(`github-writer: ${field} must be a list of GitHub logins`);
+  }
+  return value as string[];
 }
 
 function record(value: unknown, field: string): Record<string, unknown> {

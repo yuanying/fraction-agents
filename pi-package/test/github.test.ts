@@ -72,6 +72,10 @@ before(async () => {
     if (req.method === "GET" && path === "/repos/example/wiki/pulls/3") return send(200, pullJson(3, { state: "closed", merged: true }));
     if (req.method === "POST" && path === "/repos/example/wiki/pulls") return send(201, pullJson(4));
     if (req.method === "PATCH" && path === "/repos/example/wiki/pulls/4") return send(200, pullJson(4, { title: "New title" }));
+    if (req.method === "POST" && path === "/repos/example/wiki/pulls/4/requested_reviewers") return send(201, pullJson(4));
+    if (req.method === "POST" && path === "/repos/example/wiki/pulls/5/requested_reviewers") {
+      return send(422, { message: "Reviews may only be requested from collaborators." });
+    }
     if (req.method === "PUT" && path === "/repos/example/wiki/pulls/4/merge") return send(200, { merged: true, message: "Pull Request successfully merged" });
     if (req.method === "PUT" && path === "/repos/example/wiki/pulls/5/merge") return send(405, { message: "Pull Request is not mergeable" });
     return send(404, { message: "Not Found" });
@@ -142,6 +146,16 @@ describe("GitHub App client", () => {
     assert.equal(query.get("head"), "example:wiki-keeper/x");
     assert.equal(query.get("state"), "all");
     assert.equal(query.get("direction"), "desc");
+  });
+
+  it("asks for reviewers on a pull request, and reports a refusal", async () => {
+    seen.length = 0;
+    const app = new GitHubApp(config());
+    await app.requestReviewers(4, ["octo-cat", "reviewer2"]);
+    const asked = seen.find((s) => s.path === "/repos/example/wiki/pulls/4/requested_reviewers");
+    assert.equal(asked?.method, "POST");
+    assert.deepEqual(asked?.body, { reviewers: ["octo-cat", "reviewer2"] });
+    await assert.rejects(app.requestReviewers(5, ["outsider"]), /HTTP 422 Reviews may only be requested from collaborators/);
   });
 
   it("merges with the expected head, and reports a refusal as not merged", async () => {
