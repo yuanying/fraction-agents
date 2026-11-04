@@ -37,6 +37,7 @@ Kubernetes クラスタで飼う、特化した AI エージェントの置き�
 - [0028. 脆弱性への対応の係（vuln-responder）: 分析して VEX の注釈を PR で出す](docs/adr/0028-vuln-responder.md)
 - [0029. vuln-responder の直しの PR がマージされたら、すぐ次のパッチ版を出す](docs/adr/0029-release-vulnerability-fixes-on-merge.md)
 - [0030. 呼び出し元は gated 経由でも呼べるようにし、A2A の口でも gated のアサーションを確かめる](docs/adr/0030-callers-through-gated-assertions.md)
+- [0031. 依存の更新は、コードオーナーの承認で GitHub がマージする](docs/adr/0031-merge-dependency-updates-on-code-owner-approval.md)
 
 ## 汎用ホスト
 

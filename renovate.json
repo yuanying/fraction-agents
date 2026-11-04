@@ -1,7 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "The patch, digest and pinning updates Renovate merges wait for the test workflow (type check, tests, build, the manifests rendered) and the image workflow (all four images built), which run on every pull request whatever it changes. What is merged this way reaches a release on its own through the weekly release (ADR 0024)",
-  "extends": ["github>yuanying/renovate-config", "github>yuanying/renovate-config:automerge-patch"],
+  "description": "Every update gets GitHub's auto-merge through platform-automerge, and the ruleset on main holds it until a code owner in .github/CODEOWNERS approves it and the test workflow (type check, tests, build, the manifests rendered) and the image workflow (all four images built) pass; both run on every pull request whatever it changes (ADR 0031). What is merged this way reaches a release on its own through the weekly release (ADR 0024)",
+  "extends": ["github>yuanying/renovate-config", "github>yuanying/renovate-config:platform-automerge"],
   "customManagers": [
     {
       "description": "The Node of the images' base is read as a Node release rather than as a Docker tag. A tag such as 24.12.0-trixie-slim is pushed again each time its Debian layer is rebuilt, so its time is not when that Node came out, and Docker Hub does not always give a time at all; without one, the two-day wait holds the image back for good while setup-node moves on alone. Read from the Node releases, both carry the same time and so are let through on the same day. The variant after the version is kept as written",

@@ -1,6 +1,7 @@
 # 0024. Renovate のパッチ等は CI が通れば自動でマージし、Renovate の変更だけなら週に一度リリースする
 
 - Date: 2026-10-21
+- Updated: 2026-11-04（Decision「パッチ・ダイジェスト・pin は Renovate が自分でマージする」を ADR 0031 で置き換えた）
 - Status: Accepted
 
 ## Context
@@ -17,6 +18,8 @@
 ## Decision
 
 ### パッチ・ダイジェスト・pin は Renovate が自分でマージする
+
+> この項は ADR 0031 で置き換えた。更新は、コードオーナーの承認と検査が揃ったときに GitHub の auto-merge がマージする。以下は置き換える前の決定として残す。
 
 `matchUpdateTypes` が `patch`・`digest`・`pin`・`pinDigest` の PR は `automerge` にする。minor と major は PR が開くだけで、人がマージする。
 
@@ -63,3 +66,4 @@ image のワークフローは、PR で build だけするジョブと、push �
 
 - [[0018-dependency-updates-with-renovate]] — Renovate に依存の更新を追わせること
 - [[0010-manifest-base-and-private-overlay]] — 環境で使う版を overlay が決めること
+- [[0031-merge-dependency-updates-on-code-owner-approval]] — Decision「パッチ・ダイジェスト・pin は Renovate が自分でマージする」を置き換えた。更新はコードオーナーの承認で GitHub がマージする
