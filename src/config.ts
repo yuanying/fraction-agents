@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
+import { pushPrefixProblem } from "./push.ts";
+
 export interface SkillConfig {
   id: string;
   name: string;
@@ -51,6 +53,15 @@ export interface ReportsConfig {
   readAllCallers?: string[];
   /** When set, the pages for people are served (ADR 0021). */
   web?: ReportsWebConfig;
+}
+
+/** Push notifications of task updates (ADR 0032). */
+export interface PushNotificationsConfig {
+  /**
+   * The URLs pushes may be sent to, as prefixes: absolute https URLs. A push config's URL is taken when its scheme,
+   * host name and port are a prefix's, and its path is the prefix's path or under it.
+   */
+  allowedUrlPrefixes: string[];
 }
 
 /** The one configuration file of a generic host. It holds no secrets. */
@@ -107,6 +118,8 @@ export interface Config {
   maxConcurrentTasks?: number;
   /** When set, completed tasks' replies are kept as reports (ADR 0020). */
   reports?: ReportsConfig;
+  /** When set, the agent takes push configs for these URLs, and says so in its Agent Card (ADR 0032). */
+  pushNotifications?: PushNotificationsConfig;
 }
 
 const SERVICE_ACCOUNT = /^system:serviceaccount:[^:]+:[^:]+$/;
@@ -148,6 +161,7 @@ export function parseConfig(input: unknown): Config {
       input.taskTimeLimitGraceSeconds === undefined ? 300 : duration(input, "taskTimeLimitGraceSeconds"),
     ...(input.maxConcurrentTasks === undefined ? {} : { maxConcurrentTasks: count(input.maxConcurrentTasks, "maxConcurrentTasks") }),
     ...(input.reports === undefined ? {} : { reports: reports(input.reports, dataDir, listenPort, allowedCallers, gatedConfig) }),
+    ...(input.pushNotifications === undefined ? {} : { pushNotifications: pushNotifications(input.pushNotifications) }),
   };
 }
 
@@ -223,6 +237,19 @@ function reportsWeb(value: unknown, listenPort: number, topGated: GatedConfig | 
     gated: webGated,
     allowedSubjects,
   };
+}
+
+function pushNotifications(value: unknown): PushNotificationsConfig {
+  if (!isRecord(value)) throw new Error("config: pushNotifications must be an object");
+  const field = "pushNotifications.allowedUrlPrefixes";
+  if (value.allowedUrlPrefixes === undefined) throw new Error(`config: ${field} is required`);
+  const prefixes = stringList(value.allowedUrlPrefixes, field);
+  if (prefixes.length === 0) throw new Error(`config: ${field} must not be empty`);
+  for (const prefix of prefixes) {
+    const problem = pushPrefixProblem(prefix);
+    if (problem !== undefined) throw new Error(`config: ${field} ${problem}, got ${JSON.stringify(prefix)}`);
+  }
+  return { allowedUrlPrefixes: prefixes };
 }
 
 function gated(value: unknown, field: string): GatedConfig {
