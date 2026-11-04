@@ -34,6 +34,40 @@ describe("config", () => {
     assert.equal(config.taskTimeLimitGraceSeconds, 300);
     assert.equal(config.maxConcurrentTasks, undefined);
     assert.equal(config.reports, undefined);
+    assert.equal(config.pushNotifications, undefined);
+  });
+
+  it("takes the URL prefixes push notifications may be sent to (ADR 0032)", () => {
+    const config = parseConfig({
+      ...minimal,
+      pushNotifications: { allowedUrlPrefixes: ["https://natsumi.example.test/v1/a2a-push", "https://other.example.test:8443/"] },
+    });
+    assert.deepEqual(config.pushNotifications, {
+      allowedUrlPrefixes: ["https://natsumi.example.test/v1/a2a-push", "https://other.example.test:8443/"],
+    });
+  });
+
+  for (const [prefix, why] of [
+    ["natsumi.example.test/v1", "not a URL"],
+    ["http://natsumi.example.test/v1", "not https"],
+    ["https://user:pass@natsumi.example.test/v1", "with a user name and password"],
+    ["https://user@natsumi.example.test/v1", "with a user name"],
+    ["https://natsumi.example.test/v1?token=x", "with a query"],
+    ["https://natsumi.example.test/v1?", "with an empty query"],
+    ["https://natsumi.example.test/v1#push", "with a fragment"],
+  ] as const) {
+    it(`rejects a push URL prefix ${why}`, () => {
+      assert.throws(
+        () => parseConfig({ ...minimal, pushNotifications: { allowedUrlPrefixes: [prefix] } }),
+        /pushNotifications\.allowedUrlPrefixes/,
+      );
+    });
+  }
+
+  it("rejects push notifications without a URL prefix", () => {
+    assert.throws(() => parseConfig({ ...minimal, pushNotifications: { allowedUrlPrefixes: [] } }), /pushNotifications\.allowedUrlPrefixes/);
+    assert.throws(() => parseConfig({ ...minimal, pushNotifications: {} }), /pushNotifications\.allowedUrlPrefixes/);
+    assert.throws(() => parseConfig({ ...minimal, pushNotifications: ["https://a.example"] }), /pushNotifications/);
   });
 
   it("takes a time limit for a task and its grace period", () => {

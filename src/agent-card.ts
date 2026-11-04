@@ -16,7 +16,8 @@ export function buildAgentCard(config: Config): AgentCard {
     provider: undefined,
     capabilities: {
       streaming: false,
-      pushNotifications: false,
+      // Only an agent that allows some URLs takes push configs (ADR 0032).
+      pushNotifications: config.pushNotifications !== undefined,
       extendedAgentCard: false,
       extensions: [
         {

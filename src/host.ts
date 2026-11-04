@@ -15,6 +15,7 @@ import type { Config } from "./config.ts";
 import { PiAgentExecutor } from "./executor.ts";
 import { ASSERTION_HEADER, AssertionVerifier, audienceOf } from "./gated-assertion.ts";
 import { ContextGuardHandler } from "./handler.ts";
+import { PushConfigs, PushSender } from "./push.ts";
 import { MAX_REQUEST_BYTES } from "./inbox.ts";
 import { Replies } from "./reply.ts";
 import { renderReportHtml } from "./report-html.ts";
@@ -30,6 +31,8 @@ export interface HostOptions {
   tokenReviewer: TokenReviewer;
   /** The clock for context ages. Milliseconds since the epoch. */
   now?: () => number;
+  /** How push notifications are posted. Tests record them instead. */
+  pushFetch?: typeof fetch;
 }
 
 export interface Host {
@@ -98,6 +101,16 @@ export function createHost(options: HostOptions): Host {
   const reports = config.reports ? new Reports(config.reports.dir) : undefined;
   const pageUrl = (id: string) => new URL(`reports/${id}`, withSlash(config.reports!.web!.publicUrl)).href;
   const slots = new TaskSlots(config.maxConcurrentTasks);
+  // Push notifications, on an agent that allows some URLs (ADR 0032). Kept in memory only: a task unfinished at a
+  // restart fails, and sends nothing more.
+  const pushConfigs = config.pushNotifications ? new PushConfigs() : undefined;
+  const pushSender = pushConfigs
+    ? new PushSender({
+        configs: pushConfigs,
+        prefixes: config.pushNotifications!.allowedUrlPrefixes,
+        ...(options.pushFetch ? { fetch: options.pushFetch } : {}),
+      })
+    : undefined;
   const executor = new PiAgentExecutor({
     contexts: store.contexts,
     sessions,
@@ -107,7 +120,11 @@ export function createHost(options: HostOptions): Host {
     artifactUrl: (id) => new URL(`/artifacts/${id}`, config.publicUrl).href,
     now,
     inputTimeoutMs: config.inputTimeoutSeconds * 1000,
-    failTask: (taskId, caller, reason) => store.tasks.fail(taskId, caller, reason),
+    failTask: (taskId, caller, reason) => {
+      store.tasks.fail(taskId, caller, reason);
+      // Failed outside of any request, so no update is sent; the config goes all the same.
+      void pushSender?.forget(taskId, caller);
+    },
     slots,
     ...(config.taskTimeLimitSeconds === undefined
       ? {}
@@ -131,10 +148,11 @@ export function createHost(options: HostOptions): Host {
       : {}),
   });
   const requestHandler = new ContextGuardHandler(
-    new DefaultRequestHandler(buildAgentCard(config), store.tasks, executor),
+    new DefaultRequestHandler(buildAgentCard(config), store.tasks, executor, undefined, pushConfigs, pushSender),
     store.contexts,
     store.tasks,
     now,
+    pushSender ? { prefixes: config.pushNotifications!.allowedUrlPrefixes, sender: pushSender } : undefined,
   );
 
   // gated's assertions of ServiceAccounts, for this agent's own host name (ADR 0030).
