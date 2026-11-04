@@ -150,6 +150,20 @@ Wiki 管理人はこの作業では載せ替えない。後で載せ替えると
   エージェントの bash からも github-writer を呼べるので、呼び出し元の名前を申告させるだけでは足りない。
   載せ替えのときに別の ADR で決める。それまで Wiki 管理人は門番のままにする。
 
+### 新しく作った PR にレビュアーを頼む（2026-11-04）
+
+PR のレビューを、運用の係の account に任せることにした。その account は、自分にレビューを頼まれた PR を GitHub の通知で受け取る。
+多くのリポジトリでは CODEOWNERS で自動的に頼まれる。fleet-infra（private）は CODEOWNERS に本人だけを置き、その account を足さない。
+足せば、その account の承認だけでマージの条件を満たしてしまうからである。そのため、PR を出す側がレビューを頼む。
+
+- 設定のリポジトリごとに、任意の `reviewers`（GitHub のログインの並び）を持つ。書かなければ、今までどおり誰にも頼まない。
+- github-writer が PR を新しく作ったときだけ、`POST /repos/{owner}/{repo}/pulls/{number}/requested_reviewers` で頼む。
+  開いている PR を更新するときは頼み直さない。外したレビュアーを勝手に戻さないためである。
+- 頼むのに失敗しても、PR の作成は失敗にしない。github-writer のログに残すだけにする。
+  collaborator でない相手や PR の作者自身を GitHub が拒む場合も同じに扱う。PR はできているので、頼み直しは人が GitHub でできる。
+- 頼み先は設定で決まり、エージェントは選べない。エージェントの API と道具は変えない。
+- 必要な権限は pull requests の write で、token にはもう含まれている。App の権限は増えない。
+
 ## Consequences
 
 - エージェントが prompt injection を受けても、GitHub にできることは、許したリポジトリの許したブランチへの push と、PR までになる。

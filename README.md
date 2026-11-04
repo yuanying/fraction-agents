@@ -728,6 +728,8 @@ github-writer がすること:
   GitHub のブランチをそのまま写す。起動したとき、`syncIntervalSeconds` ごと、頼まれたときに fetch する。
 - 受け取った bundle のブランチを、規則を確かめてから push する。早送りだけで、force push はしない。
 - ブランチの PR を既定のブランチに向けて作る。開いている PR があれば、題と本文を更新する。
+- PR を新しく作ったときは、そのリポジトリの `reviewers` にレビューを頼む。開いている PR の更新では頼み直さない。
+  頼むのに失敗しても（collaborator でない、PR の作者自身など）PR はそのまま作り、失敗はログに出す。
 
 github-writer がしないこと: マージ、既定のブランチへの push、ブランチとタグの削除、タグの push、リポジトリの設定の変更。どれも口が無い。
 
@@ -785,6 +787,7 @@ github-writer とエージェントの両方が同じファイルを読む。秘
 | `repositories[].writablePaths` | | `[]` | 書けば、変更はすべてこの下でなければならない |
 | `repositories[].appendOnlyPaths` | | `[]` | 追加だけを許すパス |
 | `repositories[].readOnlyPaths` | | `[]` | すべての変更を拒否するパス |
+| `repositories[].reviewers` | | `[]` | PR を新しく作ったときにレビューを頼む GitHub のログインの並び。空なら誰にも頼まない |
 | `workspace.cloneDir` | | | エージェントの側だけ。context ごとの worktree の元になる永続の clone の置き場。絶対パス（上の「context ごとの worktree」） |
 | `workspace.commitIdentity.name`・`.email` | `workspace` を書くなら必須 | | エージェントの側だけ。worktree での commit の名義 |
 

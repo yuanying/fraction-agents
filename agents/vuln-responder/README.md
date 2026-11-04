@@ -22,6 +22,9 @@ private の overlay（ADR 0010）で渡す。
 - `config.json` の `publicUrl`
 - `github-writer.json` の `workspace.commitIdentity`。App の bot の名前とメール（`<slug>[bot]`、`<bot の user ID>+<slug>[bot]@users.noreply.github.com`）にする
 - GitHub App の秘密鍵。Secret `vuln-responder-github-app`（キー `private-key.pem`）を手で作る。git に置かない
+- 要れば `github-writer.json` の `repositories[].reviewers`。係が PR を新しく作ったときに、そのログインにレビューを頼む（ADR 0027）。
+  CODEOWNERS でレビューが自動で頼まれないリポジトリ（fleet-infra）に、レビューを受け持つ account のログインを書く。
+  例には書いていない。頼めなくても PR はでき、失敗は github-writer のログに出る
 
 App の ID（5493557）と installation の ID（175776468）、bot の名前とメールは秘密ではないので、例にそのまま書いている。
 App の権限は Contents と Pull requests の write、Metadata の read だけである（Workflows は無い）。
