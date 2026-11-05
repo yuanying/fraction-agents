@@ -23,7 +23,7 @@
     "@types/express": "5.0.6",
     "@types/node": "24.19.2",
     "@types/sanitize-html": "2.16.2",
-    "mermaid": "12.2.0",
+    "mermaid": "12.3.0",
     "typebox": "1.4.3",
     "typescript": "7.0.2"
   }
