@@ -6,6 +6,6 @@
   "dependencies": {
     "@kvidzibo/pi-web-access": "0.3.0",
     "agent-browser": "0.41.1",
-    "pi-agent-browser-native": "0.9.13"
+    "pi-agent-browser-native": "0.9.16"
   }
 }
