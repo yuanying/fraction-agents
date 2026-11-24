@@ -48,8 +48,9 @@ CMD ["--config", "/etc/fraction-agents/config.json"]
 FROM host AS web-researcher
 USER root
 # Debian's Chromium, and CJK fonts so that Japanese pages read and screenshot properly.
+# DSA-6653-1 (trixie-security): pin both packages so a cached older apt layer cannot satisfy this build.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends chromium fonts-noto-cjk \
+  && apt-get install -y --no-install-recommends chromium=156.0.8078.108-1~deb13u1 chromium-common=156.0.8078.108-1~deb13u1 fonts-noto-cjk \
   && rm -rf /var/lib/apt/lists/*
 # The versions are pinned by the lock. Pi provides the packages' peer dependencies (.npmrc: legacy-peer-deps).
 WORKDIR /opt/fraction-agents/web-researcher
