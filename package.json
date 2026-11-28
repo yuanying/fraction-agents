@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "@types/express": "5.0.6",
-    "@types/node": "24.19.2",
+    "@types/node": "24.19.4",
     "@types/sanitize-html": "2.16.2",
     "mermaid": "12.3.0",
     "typebox": "1.4.7",
